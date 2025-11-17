@@ -1,0 +1,19 @@
+# Python venvs
+venv/
+*/venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Node / frontend (later)
+node_modules/
+
+# macOS
+.DS_Store
+
+# Secrets
+.env
+
+#notes
+notes.txt
