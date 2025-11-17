@@ -13,7 +13,7 @@ node_modules/
 .DS_Store
 
 # Secrets
-.env
+*.env
 
 #notes
 notes.txt
