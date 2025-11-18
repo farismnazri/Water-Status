@@ -1,7 +1,20 @@
+# macOS
 .DS_Store
-.env
-/node_modules/
 
-# React Router
-/.react-router/
-/build/
+# Python venvs
+venv/
+backend/venv/
+
+# Node modules
+node_modules/
+frontend/node_modules/
+
+# Env files
+.env
+backend/.env
+frontend/.env
+
+# Build artifacts
+dist/
+build/
+.react-router/
