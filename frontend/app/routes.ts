@@ -13,6 +13,10 @@ export default [
   // "/products"
   route("products", "routes/products.tsx"),
 
+  route("users", "routes/users.tsx"),
+
+  route("posts", "routes/posts.tsx"),
+
   // "/subscriptions"
   route("subscriptions", "routes/subscriptions.tsx"),
 ] satisfies RouteConfig;

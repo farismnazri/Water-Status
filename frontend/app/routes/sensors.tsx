@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import type { Route } from "./+types/sensors";
 import { MapContainer, TileLayer, CircleMarker, Tooltip, Polyline } from "react-leaflet";
+import "leaflet/dist/leaflet.css";
 
 
 export function meta({}: Route.MetaArgs) {
@@ -341,79 +342,80 @@ export default function SensorsPage() {
         {/* Map + table of stations */}
         {!loading && !error && (
           <>
-            {/* Map card */}
-            <div className="ws-card overflow-hidden mb-4">
-              <div className="px-4 pt-4 pb-2 flex flex-wrap items-center justify-between gap-2">
-                <div className="text-xs sm:text-sm text-slate-600">
-                  <p className="font-semibold">
-                    Map view ({filtered.length} station{filtered.length === 1 ? "" : "s"})
-                  </p>
-                  <p className="text-[11px] text-slate-500">
-                    Markers follow your filters: type + location.
-                  </p>
+{/* Map card */}
+<div className="ws-card overflow-hidden mb-4">
+  <div className="px-4 pt-4 pb-2 flex flex-wrap items-center justify-between gap-2">
+    <div className="text-xs sm:text-sm text-slate-600">
+      <p className="font-semibold">
+        Map view ({filtered.length} station{filtered.length === 1 ? "" : "s"})
+      </p>
+      <p className="text-[11px] text-slate-500">
+        Markers follow your filters: type + location. Overlapping stations are fanned out with a tiny line back to their real spot.
+      </p>
+    </div>
+  </div>
+
+  <div className="h-72 sm:h-80">
+    {isClient && (
+      <MapContainer
+        center={[3.14, 101.69]}   // roughly Klang Valley
+        zoom={11}
+        scrollWheelZoom={false}
+        className="h-full w-full rounded-b-2xl"
+      >
+        <TileLayer
+          attribution='&copy; OpenStreetMap contributors, OSM Humanitarian'
+          url="https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png"
+        />
+
+        {displayMarkers.map((marker) => (
+          <React.Fragment key={marker.sensor.id}>
+            {/* If offset, draw a tiny dashed line back to the true location */}
+            {marker.isOffset && (
+              <Polyline
+                positions={[
+                  [marker.originalLat, marker.originalLng],
+                  [marker.lat, marker.lng],
+                ]}
+                pathOptions={{
+                  color: "#94a3b8", // subtle grey
+                  weight: 1,
+                  opacity: 0.8,
+                  dashArray: "2,4",
+                }}
+              />
+            )}
+
+            <CircleMarker
+              center={[marker.lat, marker.lng]}
+              radius={7}
+              pathOptions={{
+                color: markerColorForType(marker.sensor.type),
+                fillColor: markerColorForType(marker.sensor.type),
+                fillOpacity: 0.9,
+                weight: 2,
+              }}
+            >
+              <Tooltip direction="top" offset={[0, -4]} opacity={1}>
+                <div className="text-[11px]">
+                  <div className="font-semibold">{marker.sensor.name}</div>
+                  <div className="text-slate-600">{marker.sensor.location}</div>
+                  <div className="text-slate-500">
+                    {marker.sensor.type === "rain"
+                      ? "Rain station"
+                      : marker.sensor.type === "water_level"
+                      ? "River level"
+                      : "Temperature"}
+                  </div>
                 </div>
-              </div>
-
-              <div className="h-72 sm:h-80">
-                {isClient && (
-                  <MapContainer
-                    center={[3.14, 101.69]}
-                    zoom={11}
-                    scrollWheelZoom={false}
-                    className="h-full w-full rounded-b-2xl"
-                  >
-                  <TileLayer
-                    attribution='&copy; OpenStreetMap contributors, OSM Humanitarian'
-                    url="https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png"
-                  />
-                    {displayMarkers.map((marker) => (
-                      <React.Fragment key={marker.sensor.id}>
-                        {/* If offset, draw a tiny line back to the true location */}
-                        {marker.isOffset && (
-                          <Polyline
-                            positions={[
-                              [marker.originalLat, marker.originalLng],
-                              [marker.lat, marker.lng],
-                            ]}
-                            pathOptions={{
-                              color: "#94a3b8", // subtle grey-ish
-                              weight: 1,
-                              opacity: 0.8,
-                              dashArray: "2,4",
-                            }}
-                          />
-                        )}
-
-                        <CircleMarker
-                          center={[marker.lat, marker.lng]}
-                          radius={7}
-                          pathOptions={{
-                            color: markerColorForType(marker.sensor.type),
-                            fillColor: markerColorForType(marker.sensor.type),
-                            fillOpacity: 0.9,
-                            weight: 2,
-                          }}
-                        >
-                          <Tooltip direction="top" offset={[0, -4]} opacity={1}>
-                            <div className="text-[11px]">
-                              <div className="font-semibold">{marker.sensor.name}</div>
-                              <div className="text-slate-600">{marker.sensor.location}</div>
-                              <div className="text-slate-500">
-                                {marker.sensor.type === "rain"
-                                  ? "Rain station"
-                                  : marker.sensor.type === "water_level"
-                                  ? "River level"
-                                  : "Temperature"}
-                              </div>
-                            </div>
-                          </Tooltip>
-                        </CircleMarker>
-                      </React.Fragment>
-                    ))}
-                  </MapContainer>
-                )}
-              </div>
-            </div>
+              </Tooltip>
+            </CircleMarker>
+          </React.Fragment>
+        ))}
+      </MapContainer>
+    )}
+  </div>
+</div>
 
 {/* Table card */}
 <div className="ws-card overflow-hidden">

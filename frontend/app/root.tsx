@@ -9,6 +9,8 @@ import {
   ScrollRestoration,
 } from "react-router";
 
+import { useEffect, useState } from "react";
+
 import type { Route } from "./+types/root";
 import "./app.css";
 
@@ -31,8 +33,61 @@ export function Layout({ children }: { children: React.ReactNode }) {
     { to: "/about", label: "About us" },
     { to: "/sensors", label: "Stations" },
     { to: "/products", label: "Products" },
-    { to: "/subscriptions", label: "Subscriptions" },
+    { to: "/posts", label: "Posts" },
+    { to: "/users", label: "Users" },
   ];
+
+  const [activeUser, setActiveUser] = useState<{
+    name: string;
+    plan: string | null;
+  }>(() => {
+    if (typeof window === "undefined") {
+      return { name: "Guest", plan: null };
+    }
+    try {
+      const raw = window.localStorage.getItem("wsActiveUser");
+      if (!raw) return { name: "Guest", plan: null };
+      const saved = JSON.parse(raw);
+      return {
+        name: saved?.name || "Guest",
+        plan: saved?.plan ?? null,
+      };
+    } catch {
+      return { name: "Guest", plan: null };
+    }
+  });
+
+  // listen for the custom event from UsersPage
+  useEffect(() => {
+    function refreshFromStorage() {
+      try {
+        const raw = window.localStorage.getItem("wsActiveUser");
+        if (!raw) {
+          setActiveUser({ name: "Guest", plan: null });
+          return;
+        }
+        const saved = JSON.parse(raw);
+        setActiveUser({
+          name: saved?.name || "Guest",
+          plan: saved?.plan ?? null,
+        });
+      } catch {
+        setActiveUser({ name: "Guest", plan: null });
+      }
+    }
+
+    // our custom event
+    window.addEventListener("ws-active-user-changed", refreshFromStorage);
+    // also react if another tab changes it
+    window.addEventListener("storage", (e) => {
+      if (e.key === "wsActiveUser") refreshFromStorage();
+    });
+
+    return () => {
+      window.removeEventListener("ws-active-user-changed", refreshFromStorage);
+      window.removeEventListener("storage", refreshFromStorage as any);
+    };
+  }, []);
 
   return (
     <html lang="en">
@@ -44,39 +99,51 @@ export function Layout({ children }: { children: React.ReactNode }) {
       </head>
       <body className="min-h-screen bg-[var(--ws-bg)] text-[var(--ws-text-main)]">
         {/* Top nav */}
-        <header className="border-b border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)]/95 backdrop-blur">
+                <header className="border-b border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)]/95 backdrop-blur">
           <div className="max-w-6xl mx-auto flex items-center justify-between px-4 py-3">
-          <Link to="/" className="flex items-center gap-2">
-            <span className="ws-logo-circle inline-flex h-7 w-7 items-center justify-center text-sm font-bold">
-              W
-            </span>
-            <span className="text-sm font-semibold tracking-tight">
-              Water Status
-            </span>
-          </Link>
+            {/* Left: logo */}
+            <Link to="/" className="flex items-center gap-2">
+              <span className="ws-logo-circle inline-flex h-7 w-7 items-center justify-center text-sm font-bold">
+                W
+              </span>
+              <span className="text-sm font-semibold tracking-tight">
+                Water Status
+              </span>
+            </Link>
 
-            <nav className="flex gap-1 text-xs sm:text-sm">
-              {navItems.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  className={({ isActive }) =>
-                    [
-                      "px-3 py-1.5 rounded-full transition",
-                      // default state
-                      "text-[var(--ws-text-muted)] hover:text-[var(--ws-text-main)] hover:bg-[var(--ws-accent-alt)]/70",
-                      // active tab
-                      isActive
-                        ? "bg-[var(--ws-accent)] text-slate-950 border border-[var(--ws-accent-soft)] shadow-sm"
-                        : "",
-                    ].join(" ")
-                  }
-                  end={item.to === "/"}
-                >
-                  {item.label}
-                </NavLink>
-              ))}
-            </nav>
+            {/* Right: nav + active user */}
+            <div className="flex items-center gap-4">
+              <nav className="flex gap-1 text-xs sm:text-sm">
+                {navItems.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className={({ isActive }) =>
+                      [
+                        "px-3 py-1.5 rounded-full transition",
+                        "text-[var(--ws-text-muted)] hover:text-[var(--ws-text-main)] hover:bg-[var(--ws-accent-alt)]/70",
+                        isActive
+                          ? "bg-[var(--ws-accent)] text-slate-950 border border-[var(--ws-accent-soft)] shadow-sm"
+                          : "",
+                      ].join(" ")
+                    }
+                    end={item.to === "/"}
+                  >
+                    {item.label}
+                  </NavLink>
+                ))}
+              </nav>
+
+              {/* Active user pill */}
+              <div className="flex flex-col items-end text-[11px] leading-tight">
+                <span className="font-semibold text-slate-800">
+                  {activeUser.name || "Guest"}
+                </span>
+                <span className="uppercase tracking-wide text-[10px] text-slate-500">
+                  {activeUser.plan ? `${activeUser.plan} plan` : "Guest"}
+                </span>
+              </div>
+            </div>
           </div>
         </header>
 
