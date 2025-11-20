@@ -2,10 +2,12 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from bson import ObjectId
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Optional, List
 from fastapi.middleware.cors import CORSMiddleware
+from pymongo import MongoClient
 
 from .db import db
+from .models import UserReportCreate
 
 app = FastAPI()
 
@@ -33,29 +35,29 @@ def health_check():
 
 # ---- Fake sensor data (for now) ----
 
-fake_sensors = [
-    {
-        "id": 1,
-        "name": "River Level Sensor - Sungai Gombak",
-        "type": "Water_Level",
-        "location": "Sungai Gombak",
-        "unit": "m",
-    },
-    {
-        "id": 2,
-        "name": "Rain Gauge - Kampung Baru",
-        "type": "rainfall",
-        "location": "Kampung Baru",
-        "unit": "mm/h",
-    },
-    {
-        "id": 3,
-        "name": "Temperature Sensor - Kampung Baru",
-        "type": "temperature",
-        "location": "Kampung Baru",
-        "unit": "°C / %RH",
-    },
-]
+# fake_sensors = [
+#     {
+#         "id": 1,
+#         "name": "River Level Sensor - Sungai Gombak",
+#         "type": "Water_Level",
+#         "location": "Sungai Gombak",
+#         "unit": "m",
+#     },
+#     {
+#         "id": 2,
+#         "name": "Rain Gauge - Kampung Baru",
+#         "type": "rainfall",
+#         "location": "Kampung Baru",
+#         "unit": "mm/h",
+#     },
+#     {
+#         "id": 3,
+#         "name": "Temperature Sensor - Kampung Baru",
+#         "type": "temperature",
+#         "location": "Kampung Baru",
+#         "unit": "°C / %RH",
+#     },
+# ]
 
 ALLOWED_PLANS = ["free", "plus", "ultra"]
 
@@ -71,6 +73,14 @@ class UserUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
     plan: Optional[str] = None
+
+class UserReportUpdate(BaseModel):
+    user_id: str                     # who is allowed to edit
+    value: Optional[float] = None
+    comment: Optional[str] = None
+    timestamp: Optional[datetime] = None
+    type: Optional[str] = None
+    sensor_id: Optional[str] = None
 
 ALLOWED_CATEGORIES = ["water_level", "rain", "temperature"]
 
@@ -145,6 +155,15 @@ class ReportUpdate(BaseModel):
     unit: Optional[str] = None
     timestamp: Optional[datetime] = None
     comment: Optional[str] = None
+
+# --- UserReportUpdate for per-user PATCH ---
+class UserReportUpdate(BaseModel):
+    user_id: str                     # who is allowed to edit
+    value: Optional[float] = None
+    comment: Optional[str] = None
+    timestamp: Optional[datetime] = None
+    type: Optional[str] = None
+    sensor_id: Optional[str] = None
 
 class ReportCreate(BaseModel):
     user_id: str          # Mongo user id as string
@@ -369,22 +388,40 @@ async def get_user(user_id: str):
     del doc["_id"]
     return doc
 
-@app.delete("/users/{user_id}")
-async def delete_user(user_id: str):
-    # 1. Validate ID format
+@app.delete("/user-reports/{report_id}")
+async def delete_user_report(report_id: str, user_id: str):
+    """
+    Delete a single user report by its Mongo _id, but only if it belongs
+    to the given user_id.
+    """
+    # 1) Validate ids
     try:
-        oid = ObjectId(user_id)
+        rid = ObjectId(report_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid report ID format")
+
+    try:
+        uid = ObjectId(user_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid user ID format")
 
-    # 2. Delete from MongoDB
-    result = await db.users.delete_one({"_id": oid})
+    # 2) Fetch report to check ownership
+    doc = await db.user_reports.find_one({"_id": rid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Report not found")
 
+    if doc.get("user_id") != uid:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only delete your own reports.",
+        )
+
+    # 3) Delete
+    result = await db.user_reports.delete_one({"_id": rid})
     if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="User not found")
+        raise HTTPException(status_code=404, detail="Report not found")
 
-    # 3. Return a simple confirmation
-    return {"id": user_id, "deleted": True}
+    return {"id": report_id, "deleted": True}
 
 @app.post("/reports")
 async def create_report(report: ReportCreate):
@@ -429,67 +466,165 @@ async def list_reports(limit: int = 50):
 
     return {"reports": reports}
 
-@app.patch("/reports/{report_id}")
-async def update_report(report_id: str, payload: ReportUpdate):
-    # 1. Validate report ID format
+@app.patch("/user-reports/{report_id}")
+async def update_user_report(report_id: str, payload: UserReportUpdate):
+    """
+    Update fields of a user report, but only if the requesting user_id
+    matches the report's user_id.
+    """
+    # 1) Validate ids
     try:
         rid = ObjectId(report_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid report ID format")
 
-    # 2. Build the update dict with only provided fields
+    try:
+        uid = ObjectId(payload.user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user ID format")
+
+    # 2) Fetch existing report
+    existing = await db.user_reports.find_one({"_id": rid})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    if existing.get("user_id") != uid:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only edit your own reports.",
+        )
+
+    # 3) Build updates
     updates: dict = {}
-
-    if payload.category is not None:
-        updates["category"] = normalize_category(payload.category)
-
-    if payload.location is not None:
-        updates["location"] = payload.location
-
     if payload.value is not None:
         updates["value"] = payload.value
-
-    if payload.unit is not None:
-        updates["unit"] = payload.unit
-
-    if payload.timestamp is not None:
-        updates["timestamp"] = payload.timestamp
-
     if payload.comment is not None:
         updates["comment"] = payload.comment
+    if payload.timestamp is not None:
+        updates["timestamp"] = payload.timestamp
+    # ⭐ allow changing type (rain / water_level / temperature)
+    if payload.type is not None:
+        updates["type"] = normalize_category(payload.type)
+
+    # ⭐ allow changing station (sensor)
+    if payload.sensor_id is not None:
+        try:
+            new_sid = ObjectId(payload.sensor_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid sensor ID format")
+
+        sensor = await db.sensors.find_one({"_id": new_sid})
+        if not sensor:
+            raise HTTPException(status_code=404, detail="Sensor not found")
+        
+        # update sensor fields together
+        updates["sensor_id"] = new_sid
+        updates["sensor_name"] = sensor.get("name")
+        updates["location"] = sensor.get("location")
+        if sensor.get("unit"):
+            updates["unit"] = sensor["unit"]   # keep unit in sync with station
 
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    # 3. Apply update in MongoDB
-    result = await db.reports.update_one({"_id": rid}, {"$set": updates})
+    # 4) Apply and return updated doc
+    await db.user_reports.update_one({"_id": rid}, {"$set": updates})
 
-    if result.matched_count == 0:
-        raise HTTPException(status_code=404, detail="Report not found")
-
-    # 4. Return the updated report
-    doc = await db.reports.find_one({"_id": rid})
+    doc = await db.user_reports.find_one({"_id": rid})
     doc["id"] = str(doc["_id"])
+    doc["sensor_id"] = str(doc["sensor_id"])
     doc["user_id"] = str(doc["user_id"])
+    doc["source"] = doc.get("source", "User")
     del doc["_id"]
     return doc
 
-@app.delete("/reports/{report_id}")
-async def delete_report(report_id: str):
-    # 1. Validate report ID format
+@app.delete("/user-reports/{report_id}")
+async def delete_user_report(report_id: str, user_id: str):
+    """
+    Delete a single user report by its Mongo _id, but only if it belongs
+    to the given user_id.
+    """
+    # 1) Validate ids
     try:
         rid = ObjectId(report_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid report ID format")
 
-    # 2. Delete from MongoDB
-    result = await db.reports.delete_one({"_id": rid})
+    try:
+        uid = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user ID format")
 
+    # 2) Fetch report to check ownership
+    doc = await db.user_reports.find_one({"_id": rid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    if doc.get("user_id") != uid:
+        # someone else is trying to delete this report
+        raise HTTPException(
+            status_code=403,
+            detail="You can only delete your own reports.",
+        )
+
+    # 3) Delete
+    result = await db.user_reports.delete_one({"_id": rid})
     if result.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    # 3. Return confirmation
     return {"id": report_id, "deleted": True}
+
+# --- PATCH endpoint for per-user report update ---
+@app.patch("/user-reports/{report_id}")
+async def update_user_report(report_id: str, payload: UserReportUpdate):
+    """
+    Update fields of a user report, but only if the requesting user_id
+    matches the report's user_id.
+    """
+    # 1) Validate ids
+    try:
+        rid = ObjectId(report_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid report ID format")
+
+    try:
+        uid = ObjectId(payload.user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user ID format")
+
+    # 2) Fetch existing report
+    existing = await db.user_reports.find_one({"_id": rid})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    if existing.get("user_id") != uid:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only edit your own reports.",
+        )
+
+    # 3) Build updates
+    updates: dict = {}
+    if payload.value is not None:
+        updates["value"] = payload.value
+    if payload.comment is not None:
+        updates["comment"] = payload.comment
+    if payload.timestamp is not None:
+        updates["timestamp"] = payload.timestamp
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    # 4) Apply and return updated doc
+    await db.user_reports.update_one({"_id": rid}, {"$set": updates})
+
+    doc = await db.user_reports.find_one({"_id": rid})
+    doc["id"] = str(doc["_id"])
+    doc["sensor_id"] = str(doc["sensor_id"])
+    doc["user_id"] = str(doc["user_id"])
+    doc["source"] = doc.get("source", "User")
+    del doc["_id"]
+    return doc
 
 @app.get("/reports/{report_id}")
 async def get_report(report_id: str):
@@ -510,6 +645,90 @@ async def get_report(report_id: str):
     del doc["_id"]
 
     return doc
+
+@app.post("/user-reports")
+async def create_user_report(report: UserReportCreate):
+    # 1. Validate & convert user_id
+    try:
+        user_oid = ObjectId(report.user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user ID format")
+
+    user = await db.users.find_one({"_id": user_oid})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # 2. Validate & convert sensor_id
+    try:
+        sensor_oid = ObjectId(report.sensor_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid sensor ID format")
+
+    sensor = await db.sensors.find_one({"_id": sensor_oid})
+    if not sensor:
+        raise HTTPException(status_code=404, detail="Sensor not found")
+
+    # 3. Normalise type ("rainfall", "Rain", etc → "rain")
+    normalized_type = normalize_category(report.type)
+
+    # 4. Decide timestamp
+    ts = report.timestamp or datetime.utcnow()
+
+    # 5. Build document to match your sensor_readings shape
+    source_name = user.get("name") or "User"
+
+    doc = {
+        "user_id": user_oid,
+        "sensor_id": sensor_oid,
+        "sensor_name": sensor.get("name"),
+        "location": sensor.get("location"),
+        "timestamp": ts,
+        "type": normalized_type,
+        "value": report.value,
+        "unit": report.unit or sensor.get("unit"),
+        "source": source_name,           # store the user's name
+        "comment": report.comment or "", # personalised text
+    }
+
+    result = await db.user_reports.insert_one(doc)
+    return {"id": str(result.inserted_id)}
+
+@app.get("/user-reports")
+async def list_user_reports(limit: int = 100):
+    """
+    Return user-made reports, always including a 'source' field
+    with the user's name if available.
+    """
+    reports = []
+    cursor = db.user_reports.find().sort("timestamp", -1).limit(limit)
+
+    async for doc in cursor:
+        # 1) Try to look up the user name from users collection
+        user_name = None
+        user_id = doc.get("user_id")
+        try:
+            # user_id in Mongo is an ObjectId
+            if isinstance(user_id, ObjectId):
+                user_doc = await db.users.find_one({"_id": user_id}, {"name": 1})
+            else:
+                user_doc = None
+            if user_doc:
+                user_name = user_doc.get("name")
+        except Exception:
+            user_name = None
+
+        # 2) Build the response document
+        doc["id"] = str(doc["_id"])
+        doc["sensor_id"] = str(doc["sensor_id"])
+        doc["user_id"] = str(doc["user_id"])
+
+        # ✅ ensure 'source' is always there and is a name if possible
+        doc["source"] = doc.get("source") or user_name or "User"
+
+        del doc["_id"]
+        reports.append(doc)
+
+    return {"reports": reports}
 
 @app.get("/sensors/{sensor_id}/readings")
 async def get_sensor_readings(sensor_id: str, hours: int = 24):
@@ -593,3 +812,21 @@ async def get_latest_sensor_reading(sensor_id: str):
         "unit": sensor.get("unit"),
         "latest_reading": doc,
     }
+
+@app.get("/sensor-readings")
+async def get_all_sensor_readings():
+    """
+    GET ALL SENSOR READINGS (all types, all locations), newest first.
+    Uses the existing async Mongo DB from .db and returns a simple list.
+    """
+    readings = []
+    cursor = db.sensor_readings.find().sort("timestamp", -1)
+
+    async for doc in cursor:
+        doc["id"] = str(doc["_id"])
+        if "sensor_id" in doc:
+            doc["sensor_id"] = str(doc["sensor_id"])
+        del doc["_id"]
+        readings.append(doc)
+
+    return {"readings": readings}
