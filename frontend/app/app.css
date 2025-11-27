@@ -3,9 +3,9 @@
 
 :root {
   /* Your main palette */
-  --ws-bg: #fff9d0;          /* warm background */
-  --ws-bg-elevated: #ffffff; /* cards / panels */
-  --ws-border-subtle: #ffe9a0;
+  --ws-bg: #e6e6e6;          /* warm background */
+  --ws-bg-elevated: #f1f1f1; /* cards / panels */
+  --ws-border-subtle: #a2d7e6;
 
   --ws-accent: #5ab2ff;      /* main blue */
   --ws-accent-soft: #a0deff; /* soft blue */

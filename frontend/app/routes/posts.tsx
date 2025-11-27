@@ -1,7 +1,7 @@
 // app/routes/posts.tsx
 // @ts-nocheck
 import { useEffect, useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2, Heart } from "lucide-react";
 import {
   LineChart,
   Line,
@@ -56,6 +56,8 @@ type UserReport = {
   user_id?: string;
   source?: string;
   comment?: string;
+  likes?: number;
+  liked_by_me?: boolean;
 };
 
 type SensorReading = {
@@ -86,6 +88,16 @@ export default function PostsPage() {
   const [chartData, setChartData] = useState<SensorReading[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
   const [chartError, setChartError] = useState<string | null>(null);
+
+  const [chartSeriesType, setChartSeriesType] = useState<
+    "rain" | "water_level" | "temperature" | null
+  >(null);
+  const [chartSeriesLabel, setChartSeriesLabel] = useState<string>("value");
+  const [chartCompareSensorId, setChartCompareSensorId] = useState<string>("");
+  const [chartCompareLabel, setChartCompareLabel] = useState<string>("");
+  const [chartCompareType, setChartCompareType] = useState<
+  "rain" | "water_level" | "temperature" | null
+  >(null);
 
   // form state
   const [sensorId, setSensorId] = useState("");
@@ -190,15 +202,24 @@ const editFilteredSensors = sensors.filter((s) => s.type === editType);
   }, []);
 
 
-  // ---- load existing user reports ----
+  // ---- load existing user reports (with liked_by_me) ----
   useEffect(() => {
     async function loadReports() {
       try {
         setLoading(true);
-        const res = await fetch(`${API_BASE}/user-reports`);
+        setError(null);
+
+        const baseUrl = `${API_BASE}/user-reports?limit=100`;
+        const url =
+          activeUser && activeUser.id
+            ? `${baseUrl}&current_user_id=${encodeURIComponent(activeUser.id)}`
+            : baseUrl;
+
+        const res = await fetch(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        setReports(data.reports ?? data);
+        const reportsArray: UserReport[] = data.reports ?? data;
+        setReports(reportsArray);
       } catch (err: any) {
         console.error(err);
         setError("Could not load user reports.");
@@ -206,8 +227,9 @@ const editFilteredSensors = sensors.filter((s) => s.type === editType);
         setLoading(false);
       }
     }
+
     loadReports();
-  }, []);
+  }, [activeUser?.id]);
 
 // ---- delete a user report ----
 async function handleDeleteReport(id: string, ownerUserId?: string) {
@@ -337,6 +359,44 @@ async function handleSaveEdit(id: string, ownerUserId?: string) {
   }
 }
 
+// ---- toggle like on a report ----
+async function handleToggleLike(report: UserReport) {
+  if (!activeUser) {
+    setError("No active user selected.");
+    return;
+  }
+
+  try {
+    setError(null);
+    const res = await fetch(
+      `${API_BASE}/user-reports/${report.id}/like`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: activeUser.id }),
+      }
+    );
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      throw new Error(body?.detail || `HTTP ${res.status}`);
+    }
+
+    const result = await res.json(); // { id, likes, liked }
+
+    setReports((prev) =>
+      prev.map((r) =>
+        r.id === report.id
+          ? { ...r, likes: result.likes, liked_by_me: result.liked }
+          : r
+      )
+    );
+  } catch (err: any) {
+    console.error(err);
+    setError(err.message || "Could not update likes.");
+  }
+}
+
   // ---- submit user report ----
 async function handleSubmit(e: React.FormEvent) {
   e.preventDefault();
@@ -352,9 +412,7 @@ async function handleSubmit(e: React.FormEvent) {
   try {
     setError(null);
 
-    const isoTimestamp = observedAt
-      ? new Date(observedAt).toISOString()
-      : undefined;
+    const isoTimestamp = observedAt || undefined;
 
     // ⭐ who is posting?
     const sourceName = getCurrentSourceName();
@@ -415,37 +473,204 @@ async function handleSubmit(e: React.FormEvent) {
   }
 }
 
-  // --- chart helpers ---
-  const selectedChartSensor = sensors.find((s) => s.id === chartSensorId) || null;
+// --- chart helpers ---
+const selectedChartSensor =
+  sensors.find((s) => s.id === chartSensorId) || null;
 
-  async function handleLoadChart() {
-    if (!chartSensorId) {
+const compareSensorOptions = selectedChartSensor
+  ? sensors.filter((s) => s.id !== chartSensorId)
+  : [];
+
+function getColorForType(
+  t: "rain" | "water_level" | "temperature" | null
+): string {
+  if (t === "rain") return "#0ea5e9"; // blue
+  if (t === "water_level") return "#22c55e"; // green
+  if (t === "temperature") return "#f97373"; // red
+  return "#0f172a"; // default
+}
+
+function getAxisLabelForType(
+  t: "rain" | "water_level" | "temperature" | null
+): string {
+  if (t === "rain") return "Rainfall (mm/h)";
+  if (t === "water_level") return "Water level (m)";
+  if (t === "temperature") return "Temperature (°C)";
+  return "Value";
+}
+
+const mainLineColor = getColorForType(chartSeriesType);
+const compareLineColor = getColorForType(chartCompareType);
+const userSeriesColor = "#6366f1"; // purple for user reports
+
+async function handleLoadChart() {
+  if (!chartSensorId) {
+    setChartData([]);
+    setChartSeriesType(null);
+    setChartSeriesLabel("value");
+    setChartCompareLabel("");
+    setChartCompareType(null);
+    return;
+  }
+
+  try {
+    setChartError(null);
+    setChartLoading(true);
+
+    // Load primary sensor readings
+    const resMain = await fetch(
+      `${API_BASE}/sensors/${chartSensorId}/readings?hours=${chartHours}`
+    );
+    if (!resMain.ok) throw new Error(`HTTP ${resMain.status}`);
+    const dataMain = await resMain.json();
+    const mainList: SensorReading[] = dataMain.readings ?? [];
+
+    // Optionally load compare sensor readings (same type only, ensured by options list)
+    let compareList: SensorReading[] = [];
+    if (chartCompareSensorId) {
+      const resCompare = await fetch(
+        `${API_BASE}/sensors/${chartCompareSensorId}/readings?hours=${chartHours}`
+      );
+      if (!resCompare.ok) throw new Error(`HTTP ${resCompare.status}`);
+      const dataCompare = await resCompare.json();
+      compareList = dataCompare.readings ?? [];
+    }
+
+    if (!Array.isArray(mainList) || mainList.length === 0) {
       setChartData([]);
+      setChartSeriesType(null);
+      setChartSeriesLabel("value");
+      setChartCompareLabel("");
+      setChartCompareType(null);
       return;
     }
 
-    try {
-      setChartError(null);
-      setChartLoading(true);
-      const res = await fetch(
-        `${API_BASE}/sensors/${chartSensorId}/readings?hours=${chartHours}`
-      );
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const list = data.readings ?? [];
-      if (Array.isArray(list)) {
-        setChartData(list);
-      } else {
-        setChartData([]);
-      }
-    } catch (err: any) {
-      console.error(err);
-      setChartError(err.message || "Could not load chart data.");
-      setChartData([]);
-    } finally {
-      setChartLoading(false);
+    // Determine main type from the first reading, so we can overlay matching user reports
+    const mainType =
+      (mainList[0]?.type as "rain" | "water_level" | "temperature" | undefined) ??
+      null;
+
+    // Filter user reports for this sensor (and same type, if known) within the selected window
+    let userReportsForSensor: UserReport[] = [];
+    if (mainType) {
+      const cutoff = new Date();
+      cutoff.setHours(cutoff.getHours() - chartHours);
+
+      userReportsForSensor = reports.filter((r) => {
+        if (r.sensor_id !== chartSensorId) return false;
+        if (r.type !== mainType) return false;
+        if (!r.timestamp) return false;
+        const tsDate = new Date(r.timestamp);
+        return tsDate >= cutoff;
+      });
     }
+
+    // Merge time‑series by timestamp into a single array with:
+    //   series0  -> main sensor readings
+    //   series1  -> compare sensor readings (optional)
+    //   userSeries -> user‑reported values (optional)
+    const merged = new Map<string, any>();
+
+    function addSeries(list: SensorReading[], key: "series0" | "series1") {
+      list.forEach((r) => {
+        if (!r.timestamp) return;
+        const ts = r.timestamp;
+        if (!merged.has(ts)) {
+          merged.set(ts, { timestamp: ts });
+        }
+        const obj = merged.get(ts);
+        obj[key] = r.value;
+      });
+    }
+
+function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
+  // Precompute main timestamps (as numbers) so we can find the nearest one
+  const mainTimes = mainList
+    .filter((r) => r.timestamp)
+    .map((r) => ({
+      ts: r.timestamp as string,
+      t: new Date(r.timestamp as string).getTime(),
+    }));
+
+  if (mainTimes.length === 0) return;
+
+  list.forEach((r) => {
+    if (!r.timestamp) return;
+
+    const tUser = new Date(r.timestamp).getTime();
+
+    // Find nearest main timestamp to this user report
+    let best = mainTimes[0];
+    let bestDiff = Math.abs(tUser - best.t);
+
+    for (let i = 1; i < mainTimes.length; i++) {
+      const diff = Math.abs(tUser - mainTimes[i].t);
+      if (diff < bestDiff) {
+        bestDiff = diff;
+        best = mainTimes[i];
+      }
+    }
+
+    const snapTs = best.ts;
+
+    // Attach the point to that existing merged row
+    const obj = merged.get(snapTs);
+    if (!obj) return;
+
+    // If multiple user points snap to the same reading, keep the first one
+    if (obj.userSeries === undefined) {
+      obj.userSeries = r.value;
+      obj.userSeriesSource = r.source || "User";
+    }
+  });
+}
+
+    addSeries(mainList, "series0");
+    if (compareList.length > 0) {
+      addSeries(compareList, "series1");
+    }
+    if (userReportsForSensor.length > 0) {
+      addUserSeries(userReportsForSensor, mainList);
+    }
+
+    const mergedArray = Array.from(merged.values()).sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    setChartData(mergedArray as any);
+
+    const mainSensor = selectedChartSensor;
+    const compareSensor = sensors.find((s) => s.id === chartCompareSensorId) || null;
+
+    if (mainSensor) {
+      const t = mainSensor.type as "rain" | "water_level" | "temperature";
+      setChartSeriesType(t);
+      setChartSeriesLabel(getAxisLabelForType(t));
+    } else {
+      setChartSeriesType(null);
+      setChartSeriesLabel("Value");
+    }
+
+    if (compareSensor && compareList.length > 0) {
+      const ct = compareSensor.type as "rain" | "water_level" | "temperature";
+      setChartCompareType(ct);
+      setChartCompareLabel(getAxisLabelForType(ct));
+    } else {
+      setChartCompareLabel("");
+      setChartCompareType(null);
+    }
+  } catch (err: any) {
+    console.error(err);
+    setChartError(err.message || "Could not load chart data.");
+    setChartData([]);
+    setChartSeriesType(null);
+    setChartSeriesLabel("value");
+    setChartCompareLabel("");
+    setChartCompareType(null);
+  } finally {
+    setChartLoading(false);
   }
+}
 
   return (
     <main className="min-h-screen">
@@ -457,7 +682,7 @@ async function handleSubmit(e: React.FormEvent) {
               <p className="text-xs uppercase tracking-wide text-slate-500">
                 Sensor data · prototype
               </p>
-              <h1 className="text-2xl sm:text-3xl font-semibold leading-tight tracking-tight">
+              <h1 className="text-2xl sm:text-1xl font-semibold leading-tight tracking-tight">
                 Time‑series snapshot from your stations.
               </h1>
               <p className="mt-1 text-sm text-slate-600 max-w-xl leading-relaxed">
@@ -570,6 +795,23 @@ async function handleSubmit(e: React.FormEvent) {
                 </div>
 
                 <div className="flex items-center gap-2">
+                  <span className="text-[11px] text-slate-500">Compare with:</span>
+                  <select
+                    value={chartCompareSensorId}
+                    onChange={(e) => setChartCompareSensorId(e.target.value)}
+                    className="rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                    disabled={!chartSensorId || compareSensorOptions.length === 0}
+                  >
+                    <option value="">(none)</option>
+                    {compareSensorOptions.map((s) => (
+                      <option key={s.id} value={s.id}>
+                        {s.name} {s.location ? `· ${s.location}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="flex items-center gap-2">
                   <span className="text-[11px] text-slate-500">Window:</span>
                   <select
                     value={String(chartHours)}
@@ -618,36 +860,94 @@ async function handleSubmit(e: React.FormEvent) {
               {chartSensorId && chartData.length > 0 && (
                 <div className="w-full h-64">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={chartData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis
-                        dataKey="timestamp"
-                        tickFormatter={(value) =>
-                          new Date(value).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })
-                        }
-                        minTickGap={20}
-                      />
-                      <YAxis />
-                      <Tooltip
-                        labelFormatter={(value) =>
-                          new Date(value as string).toLocaleString()
-                        }
-                      />
-                      <Legend />
-                      <Line
-                        type="monotone"
-                        dataKey="value"
-                        dot={false}
-                        name={
-                          selectedChartSensor
-                            ? `${selectedChartSensor.name} (${selectedChartSensor.unit ?? ""})`
-                            : "value"
-                        }
-                      />
-                    </LineChart>
+<LineChart data={chartData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
+  <CartesianGrid strokeDasharray="3 3" />
+  <XAxis
+    dataKey="timestamp"
+    tickFormatter={(value) =>
+      new Date(value).toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    }
+    minTickGap={20}
+    label={{
+      value: "Time",
+      position: "insideBottomLeft",
+      offset: -5,
+      style: { fontSize: 10, fill: "#64748b" },
+    }}
+  />
+  {/* Left Y-axis for main series */}
+  <YAxis
+    yAxisId="left"
+    label={{
+      value: chartSeriesLabel || "Value",
+      angle: -90,
+      position: "insideLeft",
+      style: { fontSize: 10, fill: "#64748b" },
+    }}
+  />
+  {/* Right Y-axis only when comparing a second sensor (e.g. rain vs water level) */}
+  {chartCompareSensorId && chartCompareType && (
+    <YAxis
+      yAxisId="right"
+      orientation="right"
+      label={{
+        value: chartCompareLabel || "Compare",
+        angle: -90,
+        position: "insideRight",
+        style: { fontSize: 10, fill: "#64748b" },
+      }}
+    />
+  )}
+  <Tooltip
+    labelFormatter={(value) =>
+      new Date(value as string).toLocaleString()
+    }
+    formatter={(value, name, props) => {
+      if (name === "User reports (points)" && props && props.payload) {
+        const src = props.payload.userSeriesSource || "User";
+        return [`${value} (${src})`, name];
+      }
+      return [value, name];
+    }}
+  />
+  <Legend />
+  <Line
+    type="monotone"
+    dataKey="series0"
+    dot={false}
+    stroke={mainLineColor}
+    activeDot={{ r: 3 }}
+    yAxisId="left"
+    name={`${chartSeriesLabel} — main (solid)`}
+  />
+  {chartCompareSensorId && chartCompareLabel && (
+    <Line
+      type="monotone"
+      dataKey="series1"
+      dot={false}
+      stroke={compareLineColor}
+      strokeDasharray="4 2"
+      activeDot={{ r: 3 }}
+      yAxisId="right"
+      name={`${chartCompareLabel} — compare (dashed)`}
+    />
+  )}
+  {/* User-reported values overlaid on the main axis (e.g. manual water‑level readings) */}
+  {chartSensorId &&
+    chartData.some((d: any) => d.userSeries !== undefined && d.userSeries !== null) && (
+      <Line
+        type="monotone"
+        dataKey="userSeries"
+        stroke="none"
+        dot={{ r: 4, stroke: userSeriesColor, strokeWidth: 1, fill: userSeriesColor }}
+        yAxisId="left"
+        name="User reports (points)"
+      />
+  )}
+</LineChart>
                   </ResponsiveContainer>
                 </div>
               )}
@@ -831,6 +1131,29 @@ async function handleSubmit(e: React.FormEvent) {
         {r.value} {r.unit} ({r.type})
       </span>
 
+      {/* Like button, visible for everyone */}
+      <button
+        type="button"
+        onClick={() => handleToggleLike(r)}
+        className={
+          "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] transition " +
+          (r.liked_by_me
+            ? "bg-rose-50 border-rose-200 text-rose-600"
+            : "bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100")
+        }
+      >
+        <Heart
+          className={
+            "w-3 h-3 " +
+            (r.liked_by_me
+              ? "fill-rose-500 text-rose-500"
+              : "text-slate-500")
+          }
+        />
+        <span>{r.likes ?? 0}</span>
+      </button>
+
+      {/* Edit/Delete only for the owner */}
       {canEdit && (
         <>
           {editingId === r.id ? (

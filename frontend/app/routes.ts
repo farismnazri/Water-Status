@@ -17,6 +17,8 @@ export default [
 
   route("posts", "routes/posts.tsx"),
 
+  route("cart", "routes/cart.tsx"),
+
   // "/subscriptions"
   route("subscriptions", "routes/subscriptions.tsx"),
 ] satisfies RouteConfig;

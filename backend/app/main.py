@@ -6,10 +6,29 @@ from typing import Optional, List
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
 
+import os
+import stripe
+
 from .db import db
 from .models import UserReportCreate
 
 app = FastAPI()
+
+class CheckoutItem(BaseModel):
+    name: str
+    price: float
+    quantity: int
+
+class CheckoutPayload(BaseModel):
+    items: List[CheckoutItem]
+
+@app.post("/create-checkout-session")
+async def create_checkout_session(payload: CheckoutPayload):
+    # For now: just log and return a fake URL
+    print("CHECKOUT PAYLOAD:", payload)
+
+    # Later you plug Stripe here. For now this must be valid JSON:
+    return {"url": "https://example.com"}
 
 origins = [
     "http://localhost:5173",
@@ -79,8 +98,12 @@ class UserReportUpdate(BaseModel):
     value: Optional[float] = None
     comment: Optional[str] = None
     timestamp: Optional[datetime] = None
-    type: Optional[str] = None
-    sensor_id: Optional[str] = None
+    type: Optional[str] = None       # "rain" | "water_level" | "temperature"
+    sensor_id: Optional[str] = None  # station to move this report to
+
+# Like payload model for liking/unliking user reports
+class UserReportLikePayload(BaseModel):
+    user_id: str
 
 ALLOWED_CATEGORIES = ["water_level", "rain", "temperature"]
 
@@ -156,14 +179,6 @@ class ReportUpdate(BaseModel):
     timestamp: Optional[datetime] = None
     comment: Optional[str] = None
 
-# --- UserReportUpdate for per-user PATCH ---
-class UserReportUpdate(BaseModel):
-    user_id: str                     # who is allowed to edit
-    value: Optional[float] = None
-    comment: Optional[str] = None
-    timestamp: Optional[datetime] = None
-    type: Optional[str] = None
-    sensor_id: Optional[str] = None
 
 class ReportCreate(BaseModel):
     user_id: str          # Mongo user id as string
@@ -174,15 +189,6 @@ class ReportCreate(BaseModel):
     timestamp: Optional[datetime] = None  # optional; default = now (UTC)
     comment: Optional[str] = None         # “heavy rain, fast current”, etc.
 
-@app.post("/sensors")
-async def create_sensor(sensor: SensorCreate):
-    sensor_dict = sensor.model_dump()
-
-    # Normalize type using the same logic as categories
-    sensor_dict["type"] = normalize_category(sensor_dict["type"])
-
-    result = await db.sensors.insert_one(sensor_dict)
-    return {"id": str(result.inserted_id)}
 
 @app.post("/sensors")
 async def create_sensor(sensor: SensorCreate):
@@ -388,40 +394,31 @@ async def get_user(user_id: str):
     del doc["_id"]
     return doc
 
-@app.delete("/user-reports/{report_id}")
-async def delete_user_report(report_id: str, user_id: str):
+@app.delete("/users/{user_id}")
+async def delete_user(user_id: str):
     """
-    Delete a single user report by its Mongo _id, but only if it belongs
-    to the given user_id.
+    Delete a user by ID.
+    Optionally also delete their user_reports so we don't leave orphans.
     """
-    # 1) Validate ids
+    # 1) Validate ObjectId
     try:
-        rid = ObjectId(report_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid report ID format")
-
-    try:
-        uid = ObjectId(user_id)
+        oid = ObjectId(user_id)
     except Exception:
         raise HTTPException(status_code=400, detail="Invalid user ID format")
 
-    # 2) Fetch report to check ownership
-    doc = await db.user_reports.find_one({"_id": rid})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Report not found")
+    # 2) Check user exists
+    user = await db.users.find_one({"_id": oid})
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
 
-    if doc.get("user_id") != uid:
-        raise HTTPException(
-            status_code=403,
-            detail="You can only delete your own reports.",
-        )
+    # 3) Delete the user
+    await db.users.delete_one({"_id": oid})
 
-    # 3) Delete
-    result = await db.user_reports.delete_one({"_id": rid})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Report not found")
+    # 4) Optional: clean up that user's reports
+    await db.user_reports.delete_many({"user_id": oid})
 
-    return {"id": report_id, "deleted": True}
+    return {"id": user_id, "deleted": True}
+
 
 @app.post("/reports")
 async def create_report(report: ReportCreate):
@@ -538,93 +535,7 @@ async def update_user_report(report_id: str, payload: UserReportUpdate):
     del doc["_id"]
     return doc
 
-@app.delete("/user-reports/{report_id}")
-async def delete_user_report(report_id: str, user_id: str):
-    """
-    Delete a single user report by its Mongo _id, but only if it belongs
-    to the given user_id.
-    """
-    # 1) Validate ids
-    try:
-        rid = ObjectId(report_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid report ID format")
 
-    try:
-        uid = ObjectId(user_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
-
-    # 2) Fetch report to check ownership
-    doc = await db.user_reports.find_one({"_id": rid})
-    if not doc:
-        raise HTTPException(status_code=404, detail="Report not found")
-
-    if doc.get("user_id") != uid:
-        # someone else is trying to delete this report
-        raise HTTPException(
-            status_code=403,
-            detail="You can only delete your own reports.",
-        )
-
-    # 3) Delete
-    result = await db.user_reports.delete_one({"_id": rid})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="Report not found")
-
-    return {"id": report_id, "deleted": True}
-
-# --- PATCH endpoint for per-user report update ---
-@app.patch("/user-reports/{report_id}")
-async def update_user_report(report_id: str, payload: UserReportUpdate):
-    """
-    Update fields of a user report, but only if the requesting user_id
-    matches the report's user_id.
-    """
-    # 1) Validate ids
-    try:
-        rid = ObjectId(report_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid report ID format")
-
-    try:
-        uid = ObjectId(payload.user_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
-
-    # 2) Fetch existing report
-    existing = await db.user_reports.find_one({"_id": rid})
-    if not existing:
-        raise HTTPException(status_code=404, detail="Report not found")
-
-    if existing.get("user_id") != uid:
-        raise HTTPException(
-            status_code=403,
-            detail="You can only edit your own reports.",
-        )
-
-    # 3) Build updates
-    updates: dict = {}
-    if payload.value is not None:
-        updates["value"] = payload.value
-    if payload.comment is not None:
-        updates["comment"] = payload.comment
-    if payload.timestamp is not None:
-        updates["timestamp"] = payload.timestamp
-
-    if not updates:
-        raise HTTPException(status_code=400, detail="No fields to update")
-
-    # 4) Apply and return updated doc
-    await db.user_reports.update_one({"_id": rid}, {"$set": updates})
-
-    doc = await db.user_reports.find_one({"_id": rid})
-    doc["id"] = str(doc["_id"])
-    doc["sensor_id"] = str(doc["sensor_id"])
-    doc["user_id"] = str(doc["user_id"])
-    doc["source"] = doc.get("source", "User")
-    del doc["_id"]
-    return doc
 
 @app.get("/reports/{report_id}")
 async def get_report(report_id: str):
@@ -645,6 +556,8 @@ async def get_report(report_id: str):
     del doc["_id"]
 
     return doc
+
+# --- USER REPORTS CRUD + LIKES --------------------------------------------
 
 @app.post("/user-reports")
 async def create_user_report(report: UserReportCreate):
@@ -674,7 +587,7 @@ async def create_user_report(report: UserReportCreate):
     # 4. Decide timestamp
     ts = report.timestamp or datetime.utcnow()
 
-    # 5. Build document to match your sensor_readings shape
+    # 5. Build document
     source_name = user.get("name") or "User"
 
     doc = {
@@ -686,49 +599,250 @@ async def create_user_report(report: UserReportCreate):
         "type": normalized_type,
         "value": report.value,
         "unit": report.unit or sensor.get("unit"),
-        "source": source_name,           # store the user's name
-        "comment": report.comment or "", # personalised text
+        "source": source_name,
+        "comment": report.comment or "",
+        "likes": 0,
+        "liked_by": [],   # list of ObjectIds
     }
 
     result = await db.user_reports.insert_one(doc)
     return {"id": str(result.inserted_id)}
 
+
 @app.get("/user-reports")
-async def list_user_reports(limit: int = 100):
+async def list_user_reports(
+    limit: int = 100,
+    current_user_id: str | None = None,
+):
     """
-    Return user-made reports, always including a 'source' field
-    with the user's name if available.
+    Return user-made reports, always including a 'source' field.
+    If current_user_id is provided, also include `liked_by_me` per report.
     """
+    # Try to parse the current user ID (for liked_by_me)
+    current_oid: ObjectId | None = None
+    if current_user_id:
+        try:
+            current_oid = ObjectId(current_user_id)
+        except Exception:
+            current_oid = None
+
     reports = []
     cursor = db.user_reports.find().sort("timestamp", -1).limit(limit)
 
     async for doc in cursor:
-        # 1) Try to look up the user name from users collection
+        # --- resolve user name for `source` ---
         user_name = None
         user_id = doc.get("user_id")
-        try:
-            # user_id in Mongo is an ObjectId
-            if isinstance(user_id, ObjectId):
-                user_doc = await db.users.find_one({"_id": user_id}, {"name": 1})
-            else:
-                user_doc = None
+        if isinstance(user_id, ObjectId):
+            user_doc = await db.users.find_one({"_id": user_id}, {"name": 1})
             if user_doc:
                 user_name = user_doc.get("name")
-        except Exception:
-            user_name = None
 
-        # 2) Build the response document
+        # --- likes info ---
+        likes = int(doc.get("likes") or 0)
+        liked_by = doc.get("liked_by") or []
+        if not isinstance(liked_by, list):
+            liked_by = []
+
+        liked_by_me = False
+        if current_oid is not None:
+            liked_by_me = any(
+                isinstance(x, ObjectId) and x == current_oid for x in liked_by
+            )
+
+        # --- shape the document for frontend ---
         doc["id"] = str(doc["_id"])
         doc["sensor_id"] = str(doc["sensor_id"])
         doc["user_id"] = str(doc["user_id"])
 
-        # ✅ ensure 'source' is always there and is a name if possible
         doc["source"] = doc.get("source") or user_name or "User"
+        doc["likes"] = likes
+        doc["liked_by_me"] = liked_by_me
 
+        # do NOT send raw ObjectId list
+        if "liked_by" in doc:
+            del doc["liked_by"]
         del doc["_id"]
+
         reports.append(doc)
 
     return {"reports": reports}
+
+
+class UserReportUpdate(BaseModel):
+    user_id: str
+    value: float | None = None
+    comment: str | None = None
+    timestamp: datetime | None = None
+    type: str | None = None
+    sensor_id: str | None = None
+
+
+@app.patch("/user-reports/{report_id}")
+async def update_user_report(report_id: str, payload: UserReportUpdate):
+    """
+    Update fields of a user report, but only if the requesting user_id
+    matches the report's user_id.
+    """
+    # 1) Validate ids
+    try:
+        rid = ObjectId(report_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid report ID format")
+
+    try:
+        uid = ObjectId(payload.user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user ID format")
+
+    # 2) Fetch existing
+    existing = await db.user_reports.find_one({"_id": rid})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    if existing.get("user_id") != uid:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only edit your own reports.",
+        )
+
+    # 3) Build updates
+    updates: dict = {}
+    if payload.value is not None:
+        updates["value"] = payload.value
+    if payload.comment is not None:
+        updates["comment"] = payload.comment
+    if payload.timestamp is not None:
+        updates["timestamp"] = payload.timestamp
+    if payload.type is not None:
+        updates["type"] = normalize_category(payload.type)
+    if payload.sensor_id is not None:
+        try:
+            new_sid = ObjectId(payload.sensor_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid sensor ID format")
+
+        sensor = await db.sensors.find_one({"_id": new_sid})
+        if not sensor:
+            raise HTTPException(status_code=404, detail="Sensor not found")
+
+        updates["sensor_id"] = new_sid
+        updates["sensor_name"] = sensor.get("name")
+        updates["location"] = sensor.get("location")
+        if sensor.get("unit"):
+          updates["unit"] = sensor["unit"]
+
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    await db.user_reports.update_one({"_id": rid}, {"$set": updates})
+
+    doc = await db.user_reports.find_one({"_id": rid})
+    # re-shape like in list_user_reports
+    likes = int(doc.get("likes") or 0)
+    liked_by = doc.get("liked_by") or []
+    if not isinstance(liked_by, list):
+        liked_by = []
+
+    liked_by_me = False
+    if uid is not None:
+        liked_by_me = any(isinstance(x, ObjectId) and x == uid for x in liked_by)
+
+    doc["id"] = str(doc["_id"])
+    doc["sensor_id"] = str(doc["sensor_id"])
+    doc["user_id"] = str(doc["user_id"])
+    doc["source"] = doc.get("source", "User")
+    doc["likes"] = likes
+    doc["liked_by_me"] = liked_by_me
+    del doc["_id"]
+    del doc["liked_by"]
+    return doc
+
+
+@app.delete("/user-reports/{report_id}")
+async def delete_user_report(report_id: str, user_id: str):
+    """
+    Delete a single user report by its Mongo _id, but only if it belongs
+    to the given user_id.
+    """
+    # 1) Validate ids
+    try:
+        rid = ObjectId(report_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid report ID format")
+
+    try:
+        uid = ObjectId(user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user ID format")
+
+    # 2) Fetch report to check ownership
+    doc = await db.user_reports.find_one({"_id": rid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    if doc.get("user_id") != uid:
+        raise HTTPException(
+            status_code=403,
+            detail="You can only delete your own reports.",
+        )
+
+    # 3) Delete
+    result = await db.user_reports.delete_one({"_id": rid})
+    if result.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    return {"id": report_id, "deleted": True}
+
+
+class LikePayload(BaseModel):
+  user_id: str
+
+
+@app.post("/user-reports/{report_id}/like")
+async def toggle_like_user_report(report_id: str, payload: LikePayload):
+    """
+    Toggle a like from a given user on a report.
+    Returns { id, likes, liked }.
+    """
+    try:
+        rid = ObjectId(report_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid report ID format")
+
+    try:
+        uid = ObjectId(payload.user_id)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid user ID format")
+
+    doc = await db.user_reports.find_one({"_id": rid})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    likes = int(doc.get("likes") or 0)
+    liked_by = doc.get("liked_by") or []
+    if not isinstance(liked_by, list):
+        liked_by = []
+
+    is_liked = any(isinstance(x, ObjectId) and x == uid for x in liked_by)
+
+    if is_liked:
+        # Unlike
+        liked_by = [x for x in liked_by if not (isinstance(x, ObjectId) and x == uid)]
+        likes = max(likes - 1, 0)
+        liked = False
+    else:
+        # Like
+        liked_by.append(uid)
+        likes += 1
+        liked = True
+
+    await db.user_reports.update_one(
+        {"_id": rid},
+        {"$set": {"likes": likes, "liked_by": liked_by}},
+    )
+
+    return {"id": report_id, "likes": likes, "liked": liked}
 
 @app.get("/sensors/{sensor_id}/readings")
 async def get_sensor_readings(sensor_id: str, hours: int = 24):
