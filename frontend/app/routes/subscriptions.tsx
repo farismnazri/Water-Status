@@ -1,10 +1,5 @@
 // app/routes/subscriptions.tsx
-import { Link, redirect } from "react-router";
-
-// If you want a real redirect, uncomment this loader:
-export async function loader() {
-  return redirect("/products");
-}
+import { Link } from "react-router";
 
 // Optional: meta typing if you care later
 // import type { Route } from "./+types/subscriptions";
