@@ -8,6 +8,7 @@ type CartItem = {
   id: string;
   name: string;
   price: string;
+  image?: string;
   quantity?: number;
 };
 
@@ -210,6 +211,7 @@ function SensorsTab({ onAddToCart }: { onAddToCart: (item: CartItem) => void }) 
                 id: "starter-kit",
                 name: "Starter Kit",
                 price: "RM 9.99",
+                image: "/images/basic.png",
               })
             }
           >
@@ -236,6 +238,7 @@ function SensorsTab({ onAddToCart }: { onAddToCart: (item: CartItem) => void }) 
                 id: "neighbour-bundle",
                 name: "Neighbour Bundle",
                 price: "RM 19.99",
+                image: "/images/bundle.png",
               })
             }
           >
@@ -262,6 +265,7 @@ function SensorsTab({ onAddToCart }: { onAddToCart: (item: CartItem) => void }) 
                 id: "community-pack",
                 name: "Community Pack",
                 price: "RM 24.99",
+                image: "/images/superbundle.png",
               })
             }
           >

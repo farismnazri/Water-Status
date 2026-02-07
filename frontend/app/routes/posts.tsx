@@ -84,6 +84,9 @@ export default function PostsPage() {
   // Header tabs + chart state
   const [headerTab, setHeaderTab] = useState<"snapshot" | "chart">("snapshot");
   const [chartSensorId, setChartSensorId] = useState<string>("");
+  const [chartSensorTypeFilter, setChartSensorTypeFilter] = useState<
+    "all" | "rain" | "water_level" | "temperature"
+  >("all");
   const [chartHours, setChartHours] = useState<number>(24);
   const [chartData, setChartData] = useState<SensorReading[]>([]);
   const [chartLoading, setChartLoading] = useState(false);
@@ -93,6 +96,9 @@ export default function PostsPage() {
     "rain" | "water_level" | "temperature" | null
   >(null);
   const [chartSeriesLabel, setChartSeriesLabel] = useState<string>("value");
+  const [chartCompareTypeFilter, setChartCompareTypeFilter] = useState<
+    "match" | "rain" | "water_level" | "temperature"
+  >("match");
   const [chartCompareSensorId, setChartCompareSensorId] = useState<string>("");
   const [chartCompareLabel, setChartCompareLabel] = useState<string>("");
   const [chartCompareType, setChartCompareType] = useState<
@@ -160,6 +166,74 @@ const editFilteredSensors = sensors.filter((s) => s.type === editType);
       };
     }
   }, []);
+
+  function persistActiveUser(user: ActiveUser) {
+    setActiveUser(user);
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem("wsActiveUser", JSON.stringify(user));
+      window.dispatchEvent(new CustomEvent("ws-active-user-changed"));
+    } catch (e) {
+      console.warn("Could not persist repaired active user", e);
+    }
+  }
+
+  async function repairActiveUser(current: ActiveUser): Promise<ActiveUser | null> {
+    try {
+      const listRes = await fetch(`${API_BASE}/users`);
+      if (!listRes.ok) return null;
+      const listData = await listRes.json();
+      const users: ActiveUser[] = listData.users ?? listData ?? [];
+      if (!Array.isArray(users)) return null;
+
+      let matched = users.find((u) => u.id === current.id) || null;
+
+      if (!matched && current.email) {
+        const email = current.email.trim().toLowerCase();
+        matched =
+          users.find((u) => (u.email || "").trim().toLowerCase() === email) || null;
+      }
+
+      if (!matched && current.name) {
+        const name = current.name.trim().toLowerCase();
+        matched = users.find((u) => (u.name || "").trim().toLowerCase() === name) || null;
+      }
+
+      if (matched) {
+        persistActiveUser(matched);
+        return matched;
+      }
+
+      // If no match exists, recreate based on local active user info.
+      const createPayload = {
+        name: current.name || "Guest User",
+        email:
+          current.email ||
+          `${(current.name || "guest").trim().toLowerCase().replace(/\s+/g, ".")}@local.dev`,
+        plan: current.plan || "free",
+      };
+
+      const createRes = await fetch(`${API_BASE}/users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(createPayload),
+      });
+
+      if (!createRes.ok) return null;
+      const created = await createRes.json();
+      const repaired: ActiveUser = {
+        id: created.id,
+        name: created.name || createPayload.name,
+        email: created.email || createPayload.email,
+        plan: created.plan || createPayload.plan,
+      };
+      persistActiveUser(repaired);
+      return repaired;
+    } catch (e) {
+      console.error(e);
+      return null;
+    }
+  }
 
   // ---- load sensors for dropdown ----
   useEffect(() => {
@@ -417,26 +491,49 @@ async function handleSubmit(e: React.FormEvent) {
     // ⭐ who is posting?
     const sourceName = getCurrentSourceName();
 
-    const payload = {
-      user_id: activeUser.id, // Mongo user ID
-      sensor_id: sensorId,    // Mongo sensor ID
-      type,                   // "rain" | "water_level" | "temperature"
+    const createPayloadForUser = (userId: string) => ({
+      user_id: userId,
+      sensor_id: sensorId,
+      type,
       value: Number(value),
       unit,
       timestamp: isoTimestamp,
       comment,
-      source: sourceName,     // ⭐ send to backend
-    };
-
-    const res = await fetch(`${API_BASE}/user-reports`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      source: sourceName,
     });
+
+    const postReport = async (userId: string) =>
+      fetch(`${API_BASE}/user-reports`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(createPayloadForUser(userId)),
+      });
+
+    let postingUser = activeUser;
+    let res = await postReport(postingUser.id);
 
     if (!res.ok) {
       const body = await res.json().catch(() => null);
-      throw new Error(body?.detail || `HTTP ${res.status}`);
+      const detail = body?.detail || `HTTP ${res.status}`;
+      const userIdProblem =
+        (res.status === 404 || res.status === 400) &&
+        typeof detail === "string" &&
+        (detail.toLowerCase().includes("user not found") ||
+          detail.toLowerCase().includes("invalid user id"));
+
+      if (userIdProblem) {
+        const repaired = await repairActiveUser(activeUser);
+        if (!repaired) {
+          throw new Error("Active user no longer exists. Go to Users and pick one.");
+        }
+        postingUser = repaired;
+        res = await postReport(postingUser.id);
+      }
+
+      if (!res.ok) {
+        const retryBody = await res.json().catch(() => null);
+        throw new Error(retryBody?.detail || detail);
+      }
     }
 
     const { id } = await res.json();
@@ -454,7 +551,7 @@ async function handleSubmit(e: React.FormEvent) {
         value: Number(value),
         unit,
         timestamp: isoTimestamp,
-        user_id: activeUser.id,
+        user_id: postingUser.id,
         source: sourceName,
         comment,
       },
@@ -477,9 +574,44 @@ async function handleSubmit(e: React.FormEvent) {
 const selectedChartSensor =
   sensors.find((s) => s.id === chartSensorId) || null;
 
+const chartSensorOptions =
+  chartSensorTypeFilter === "all"
+    ? sensors
+    : sensors.filter((s) => s.type === chartSensorTypeFilter);
+
+const resolvedCompareTypeFilter =
+  chartCompareTypeFilter === "match"
+    ? (selectedChartSensor?.type as "rain" | "water_level" | "temperature" | undefined)
+    : chartCompareTypeFilter;
+
 const compareSensorOptions = selectedChartSensor
-  ? sensors.filter((s) => s.id !== chartSensorId)
+  ? sensors.filter(
+      (s) => s.id !== chartSensorId && s.type === resolvedCompareTypeFilter
+    )
   : [];
+
+const shouldUseDualAxis =
+  Boolean(chartCompareSensorId) &&
+  Boolean(chartSeriesType) &&
+  Boolean(chartCompareType) &&
+  chartSeriesType !== chartCompareType;
+
+useEffect(() => {
+  if (!chartSensorId) return;
+  const exists = chartSensorOptions.some((s) => s.id === chartSensorId);
+  if (!exists) {
+    setChartSensorId("");
+    setChartCompareSensorId("");
+  }
+}, [chartSensorId, chartSensorOptions]);
+
+useEffect(() => {
+  if (!chartCompareSensorId) return;
+  const exists = compareSensorOptions.some((s) => s.id === chartCompareSensorId);
+  if (!exists) {
+    setChartCompareSensorId("");
+  }
+}, [chartCompareSensorId, compareSensorOptions]);
 
 function getColorForType(
   t: "rain" | "water_level" | "temperature" | null
@@ -502,6 +634,24 @@ function getAxisLabelForType(
 const mainLineColor = getColorForType(chartSeriesType);
 const compareLineColor = getColorForType(chartCompareType);
 const userSeriesColor = "#6366f1"; // purple for user reports
+const safeChartHours = Number.isFinite(chartHours) && chartHours > 0 ? chartHours : 24;
+const latestChartPointMs = chartData.reduce((max: number, row: any) => {
+  const pointMs = Number(row?.t);
+  return Number.isFinite(pointMs) && pointMs > max ? pointMs : max;
+}, 0);
+const chartWindowEndMs = Math.max(Date.now(), latestChartPointMs);
+const chartWindowStartMs = chartWindowEndMs - safeChartHours * 60 * 60 * 1000;
+
+function formatChartTick(value: number, hours: number): string {
+  const dt = new Date(value);
+  if (hours >= 48) {
+    return dt.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
+  return dt.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 async function handleLoadChart() {
   if (!chartSensorId) {
@@ -519,17 +669,17 @@ async function handleLoadChart() {
 
     // Load primary sensor readings
     const resMain = await fetch(
-      `${API_BASE}/sensors/${chartSensorId}/readings?hours=${chartHours}`
+      `${API_BASE}/sensors/${chartSensorId}/readings?hours=${safeChartHours}`
     );
     if (!resMain.ok) throw new Error(`HTTP ${resMain.status}`);
     const dataMain = await resMain.json();
     const mainList: SensorReading[] = dataMain.readings ?? [];
 
-    // Optionally load compare sensor readings (same type only, ensured by options list)
+    // Optionally load compare sensor readings (same or different type)
     let compareList: SensorReading[] = [];
     if (chartCompareSensorId) {
       const resCompare = await fetch(
-        `${API_BASE}/sensors/${chartCompareSensorId}/readings?hours=${chartHours}`
+        `${API_BASE}/sensors/${chartCompareSensorId}/readings?hours=${safeChartHours}`
       );
       if (!resCompare.ok) throw new Error(`HTTP ${resCompare.status}`);
       const dataCompare = await resCompare.json();
@@ -554,7 +704,7 @@ async function handleLoadChart() {
     let userReportsForSensor: UserReport[] = [];
     if (mainType) {
       const cutoff = new Date();
-      cutoff.setHours(cutoff.getHours() - chartHours);
+      cutoff.setHours(cutoff.getHours() - safeChartHours);
 
       userReportsForSensor = reports.filter((r) => {
         if (r.sensor_id !== chartSensorId) return false;
@@ -637,7 +787,14 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
       (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
 
-    setChartData(mergedArray as any);
+    const chartRows = mergedArray
+      .map((row: any) => ({
+        ...row,
+        t: new Date(row.timestamp).getTime(),
+      }))
+      .filter((row: any) => Number.isFinite(row.t));
+
+    setChartData(chartRows as any);
 
     const mainSensor = selectedChartSensor;
     const compareSensor = sensors.find((s) => s.id === chartCompareSensorId) || null;
@@ -730,7 +887,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
           {headerTab === "snapshot" ? (
             <div className="mt-3 text-xs text-slate-600">
               {readingsLoading && recentReadings.length === 0 && (
-                <p>Loading fake time‑series data…</p>
+                <p>Loading live time‑series data…</p>
               )}
 
               {!readingsLoading && recentReadings.length === 0 && (
@@ -777,61 +934,106 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
             </div>
           ) : (
             <div className="mt-3 text-xs text-slate-600 space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-slate-500">Station:</span>
-                  <select
-                    value={chartSensorId}
-                    onChange={(e) => setChartSensorId(e.target.value)}
-                    className="rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-500">Type:</span>
+                    <select
+                      value={chartSensorTypeFilter}
+                      onChange={(e) =>
+                        setChartSensorTypeFilter(
+                          e.target.value as "all" | "rain" | "water_level" | "temperature"
+                        )
+                      }
+                      className="rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                    >
+                      <option value="all">All types</option>
+                      <option value="rain">Rain</option>
+                      <option value="water_level">River level</option>
+                      <option value="temperature">Temperature</option>
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-500">Station:</span>
+                    <select
+                      value={chartSensorId}
+                      onChange={(e) => setChartSensorId(e.target.value)}
+                      className="rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                    >
+                      <option value="">Choose a station…</option>
+                      {chartSensorOptions.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} {s.location ? `· ${s.location}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-500">Window:</span>
+                    <select
+                      value={String(chartHours)}
+                      onChange={(e) => {
+                        const next = Number.parseInt(e.target.value, 10);
+                        setChartHours(Number.isFinite(next) && next > 0 ? next : 24);
+                      }}
+                      className="rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                    >
+                      <option value="6">Last 6 hours</option>
+                      <option value="12">Last 12 hours</option>
+                      <option value="24">Last 24 hours</option>
+                      <option value="48">Last 48 hours</option>
+                      <option value="168">Last 7 days</option>
+                    </select>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleLoadChart}
+                    className="ml-auto text-[11px] px-3 py-1 rounded-full bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 transition"
                   >
-                    <option value="">Choose a station…</option>
-                    {sensors.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name} {s.location ? `· ${s.location}` : ""}
-                      </option>
-                    ))}
-                  </select>
+                    Load chart
+                  </button>
                 </div>
 
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-slate-500">Compare with:</span>
-                  <select
-                    value={chartCompareSensorId}
-                    onChange={(e) => setChartCompareSensorId(e.target.value)}
-                    className="rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
-                    disabled={!chartSensorId || compareSensorOptions.length === 0}
-                  >
-                    <option value="">(none)</option>
-                    {compareSensorOptions.map((s) => (
-                      <option key={s.id} value={s.id}>
-                        {s.name} {s.location ? `· ${s.location}` : ""}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-500">Compare type:</span>
+                    <select
+                      value={chartCompareTypeFilter}
+                      onChange={(e) =>
+                        setChartCompareTypeFilter(
+                          e.target.value as "match" | "rain" | "water_level" | "temperature"
+                        )
+                      }
+                      className="rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                      disabled={!chartSensorId}
+                    >
+                      <option value="match">Match main type</option>
+                      <option value="rain">Rain</option>
+                      <option value="water_level">River level</option>
+                      <option value="temperature">Temperature</option>
+                    </select>
+                  </div>
 
-                <div className="flex items-center gap-2">
-                  <span className="text-[11px] text-slate-500">Window:</span>
-                  <select
-                    value={String(chartHours)}
-                    onChange={(e) => setChartHours(Number(e.target.value))}
-                    className="rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
-                  >
-                    <option value="6">Last 6 hours</option>
-                    <option value="12">Last 12 hours</option>
-                    <option value="24">Last 24 hours</option>
-                    <option value="48">Last 48 hours</option>
-                  </select>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-slate-500">Compare station:</span>
+                    <select
+                      value={chartCompareSensorId}
+                      onChange={(e) => setChartCompareSensorId(e.target.value)}
+                      className="rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                      disabled={!chartSensorId || compareSensorOptions.length === 0}
+                    >
+                      <option value="">(none)</option>
+                      {compareSensorOptions.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} {s.location ? `· ${s.location}` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
-
-                <button
-                  type="button"
-                  onClick={handleLoadChart}
-                  className="ml-auto text-[11px] px-3 py-1 rounded-full bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 transition"
-                >
-                  Load chart
-                </button>
               </div>
 
               {chartError && (
@@ -853,7 +1055,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
 
               {chartSensorId && !chartLoading && chartData.length === 0 && (
                 <p className="text-[11px] text-slate-500">
-                  No readings in the last {chartHours} hours for this station.
+                  No readings in the last {safeChartHours} hours for this station.
                 </p>
               )}
 
@@ -863,16 +1065,16 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
 <LineChart data={chartData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
   <CartesianGrid strokeDasharray="3 3" />
   <XAxis
-    dataKey="timestamp"
-    tickFormatter={(value) =>
-      new Date(value).toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    }
+    type="number"
+    dataKey="t"
+    scale="time"
+    domain={[chartWindowStartMs, chartWindowEndMs]}
+    allowDataOverflow
+    tickFormatter={(value) => formatChartTick(Number(value), safeChartHours)}
+    tickCount={safeChartHours >= 48 ? 7 : 6}
     minTickGap={20}
     label={{
-      value: "Time",
+      value: safeChartHours >= 48 ? "Date" : "Time",
       position: "insideBottomLeft",
       offset: -5,
       style: { fontSize: 10, fill: "#64748b" },
@@ -888,8 +1090,8 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
       style: { fontSize: 10, fill: "#64748b" },
     }}
   />
-  {/* Right Y-axis only when comparing a second sensor (e.g. rain vs water level) */}
-  {chartCompareSensorId && chartCompareType && (
+  {/* Right Y-axis only when compare sensor type differs from main sensor type */}
+  {shouldUseDualAxis && (
     <YAxis
       yAxisId="right"
       orientation="right"
@@ -903,7 +1105,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
   )}
   <Tooltip
     labelFormatter={(value) =>
-      new Date(value as string).toLocaleString()
+      new Date(Number(value)).toLocaleString()
     }
     formatter={(value, name, props) => {
       if (name === "User reports (points)" && props && props.payload) {
@@ -931,7 +1133,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
       stroke={compareLineColor}
       strokeDasharray="4 2"
       activeDot={{ r: 3 }}
-      yAxisId="right"
+      yAxisId={shouldUseDualAxis ? "right" : "left"}
       name={`${chartCompareLabel} — compare (dashed)`}
     />
   )}

@@ -6,13 +6,21 @@ import { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "react-router";
 import {
   CloudRain,
+  Droplets,
   Waves,
   ThermometerSun,
   MapPin,
   AlertCircle,
 } from "lucide-react";
 import type { Route } from "./+types/sensors";
-import { MapContainer, TileLayer, CircleMarker, Tooltip, Polyline } from "react-leaflet";
+import {
+  MapContainer,
+  TileLayer,
+  CircleMarker,
+  Tooltip,
+  Polyline,
+  Circle,
+} from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 
 
@@ -22,7 +30,7 @@ export function meta({}: Route.MetaArgs) {
     {
       name: "description",
       content:
-        "See simulated rain, river level and temperature stations around Klang Valley.",
+        "See rain, river level and temperature station updates around Klang Valley.",
     },
   ];
 }
@@ -33,9 +41,17 @@ type Sensor = {
   type: "rain" | "water_level" | "temperature";
   location: string;
   unit: string;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
   is_active: boolean;
+};
+
+type LatestReading = {
+  sensor_id: string;
+  value: number;
+  unit?: string;
+  timestamp: string;
+  source?: string;
 };
 
 type FilterKey = "all" | "rain" | "water_level" | "temperature";
@@ -46,6 +62,83 @@ function markerColorForType(type: Sensor["type"]): string {
   if (type === "rain") return "#0ea5e9";         // sky blue
   if (type === "water_level") return "#22c55e";  // green
   return "#f97373";                              // soft red
+}
+
+function rainIntensityLevel(value: number): 0 | 1 | 2 | 3 | 4 | 5 {
+  if (!Number.isFinite(value) || value <= 0.1) return 0;
+  if (value < 2) return 1;
+  if (value < 7.5) return 2;
+  if (value < 15) return 3;
+  if (value < 30) return 4;
+  return 5;
+}
+
+function rainLayerStyle(value: number): {
+  coreRadius: number;
+  midRadius: number;
+  outerRadius: number;
+  coreOpacity: number;
+  midOpacity: number;
+  outerOpacity: number;
+  color: string;
+} | null {
+  const level = rainIntensityLevel(value);
+  if (level === 0) return null;
+
+  if (level === 1) {
+    return {
+      coreRadius: 850,
+      midRadius: 1450,
+      outerRadius: 2300,
+      coreOpacity: 0.22,
+      midOpacity: 0.13,
+      outerOpacity: 0.07,
+      color: "#60a5fa",
+    };
+  }
+  if (level === 2) {
+    return {
+      coreRadius: 1100,
+      midRadius: 1900,
+      outerRadius: 3000,
+      coreOpacity: 0.3,
+      midOpacity: 0.19,
+      outerOpacity: 0.1,
+      color: "#3b82f6",
+    };
+  }
+  if (level === 3) {
+    return {
+      coreRadius: 1400,
+      midRadius: 2400,
+      outerRadius: 3600,
+      coreOpacity: 0.38,
+      midOpacity: 0.24,
+      outerOpacity: 0.13,
+      color: "#2563eb",
+    };
+  }
+  if (level === 4) {
+    return {
+      coreRadius: 1700,
+      midRadius: 2800,
+      outerRadius: 4200,
+      coreOpacity: 0.46,
+      midOpacity: 0.29,
+      outerOpacity: 0.16,
+      color: "#1d4ed8",
+    };
+  }
+
+  return {
+    coreRadius: 2000,
+    midRadius: 3300,
+    outerRadius: 5000,
+    coreOpacity: 0.54,
+    midOpacity: 0.34,
+    outerOpacity: 0.2,
+    color: "#1e3a8a",
+  };
 }
 
 export default function SensorsPage() {
@@ -62,31 +155,65 @@ export default function SensorsPage() {
   })();
 
   const [sensors, setSensors] = useState<Sensor[]>([]);
+  const [latestReadingsBySensor, setLatestReadingsBySensor] = useState<
+    Record<string, LatestReading>
+  >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<FilterKey>(initialTypeFromUrl);
   const [locationFilter, setLocationFilter] = useState<string>("all");
+  const [showRainLayer, setShowRainLayer] = useState(true);
 
   useEffect(() => {
-    async function loadSensors() {
+    let isMounted = true;
+
+    async function loadData() {
       try {
         setLoading(true);
         setError(null);
 
-        const res = await fetch(`${API_BASE}/sensors`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const sensorsRes = await fetch(`${API_BASE}/sensors`);
+        if (!sensorsRes.ok) throw new Error(`HTTP ${sensorsRes.status}`);
 
-        const data = await res.json();
-        setSensors(data.sensors ?? data);
+        const sensorsData = await sensorsRes.json();
+        const sensorsList = sensorsData.sensors ?? sensorsData;
+        if (!isMounted) return;
+        setSensors(Array.isArray(sensorsList) ? sensorsList : []);
+        setLoading(false);
+
+        // Load latest values second so station list can render immediately.
+        let latestBySensor: Record<string, LatestReading> = {};
+        const latestRes = await fetch(`${API_BASE}/sensor-readings/latest-by-sensor`);
+        if (latestRes.ok) {
+          const latestData = await latestRes.json();
+          const latestRows = latestData.latest_readings ?? [];
+          latestBySensor = latestRows.reduce(
+            (acc: Record<string, LatestReading>, row: LatestReading) => {
+              if (row?.sensor_id) acc[row.sensor_id] = row;
+              return acc;
+            },
+            {}
+          );
+        }
+
+        if (!isMounted) return;
+        setLatestReadingsBySensor(latestBySensor);
       } catch (err) {
         console.error(err);
+        if (!isMounted) return;
         setError("Could not load stations. Please try again in a moment.");
       } finally {
-        setLoading(false);
+        if (isMounted) setLoading(false);
       }
     }
 
-    loadSensors();
+    loadData();
+
+    const refresh = window.setInterval(loadData, 60_000);
+    return () => {
+      isMounted = false;
+      window.clearInterval(refresh);
+    };
   }, []);
 
   const counts = useMemo(() => {
@@ -120,6 +247,12 @@ export default function SensorsPage() {
     return base;
   }, [sensors, activeFilter, locationFilter]);
 
+  const hasCoordinates = (sensor: Sensor): boolean =>
+    typeof sensor.latitude === "number" &&
+    Number.isFinite(sensor.latitude) &&
+    typeof sensor.longitude === "number" &&
+    Number.isFinite(sensor.longitude);
+
     // Markers we actually draw on the map (may be offset from real position)
   type DisplayMarker = {
     sensor: Sensor;
@@ -135,7 +268,7 @@ export default function SensorsPage() {
     const groups = new Map<string, Sensor[]>();
 
     // Group sensors by rounded coordinate (to catch "almost same" positions)
-    filtered.forEach((s) => {
+    filtered.filter(hasCoordinates).forEach((s) => {
       const key = `${s.latitude.toFixed(4)},${s.longitude.toFixed(4)}`;
       const arr = groups.get(key) ?? [];
       arr.push(s);
@@ -179,6 +312,45 @@ export default function SensorsPage() {
     return markers;
   }, [filtered]);
 
+  const mapCenter = useMemo<[number, number]>(
+    () =>
+      displayMarkers.length > 0
+        ? [displayMarkers[0].lat, displayMarkers[0].lng]
+        : [3.14, 101.69],
+    [displayMarkers]
+  );
+
+  const rainLayerCells = useMemo(() => {
+    if (activeFilter !== "rain") return [];
+
+    const bySpot = new Map<
+      string,
+      { key: string; lat: number; lng: number; value: number; stationName: string }
+    >();
+
+    filtered.forEach((sensor) => {
+      if (sensor.type !== "rain" || !hasCoordinates(sensor)) return;
+
+      const latest = latestReadingsBySensor[sensor.id];
+      const rainValue = Number(latest?.value ?? 0);
+      if (!Number.isFinite(rainValue) || rainValue <= 0.1) return;
+
+      const key = `${sensor.latitude!.toFixed(3)},${sensor.longitude!.toFixed(3)}`;
+      const existing = bySpot.get(key);
+      if (!existing || rainValue > existing.value) {
+        bySpot.set(key, {
+          key,
+          lat: sensor.latitude!,
+          lng: sensor.longitude!,
+          value: rainValue,
+          stationName: sensor.name,
+        });
+      }
+    });
+
+    return Array.from(bySpot.values()).sort((a, b) => a.value - b.value);
+  }, [activeFilter, filtered, latestReadingsBySensor]);
+
   const filterChips: { key: FilterKey; label: string; count?: number }[] = [
     { key: "all", label: "All stations", count: sensors.length },
     { key: "rain", label: "Rain", count: counts.rain },
@@ -209,14 +381,30 @@ export default function SensorsPage() {
     );
   };
 
-  // 🔔 Temporary fake "last ping" generator
-  // Later you can replace this with real latest-reading timestamps
-  const getFakeLastPing = (sensor: Sensor, index: number): string => {
-    if (!sensor.is_active) return "—";
-    const minutesAgo = (index * 7) % 90; // 0–89 min
-    if (minutesAgo === 0) return "Just now";
-    if (minutesAgo < 60) return `${minutesAgo} min ago`;
-    return "1+ hour ago";
+  const getLatestValue = (sensor: Sensor): string => {
+    const latest = latestReadingsBySensor[sensor.id];
+    if (!latest || latest.value === null || latest.value === undefined) return "—";
+    const unit = latest.unit || sensor.unit || "";
+    return `${latest.value} ${unit}`.trim();
+  };
+
+  const getLastPing = (sensor: Sensor): string => {
+    if (!sensor.is_active) return "Offline";
+
+    const latest = latestReadingsBySensor[sensor.id];
+    if (!latest?.timestamp) return "Waiting first reading";
+
+    const ts = new Date(latest.timestamp);
+    if (Number.isNaN(ts.getTime())) return "—";
+
+    const diffMs = Date.now() - ts.getTime();
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin <= 0) return "Just now";
+    if (diffMin < 60) return `${diffMin} min ago`;
+
+    const diffHr = Math.floor(diffMin / 60);
+    if (diffHr < 24) return `${diffHr} hour${diffHr > 1 ? "s" : ""} ago`;
+    return ts.toLocaleString();
   };
 
   // Helper for showing filter text
@@ -228,6 +416,8 @@ export default function SensorsPage() {
     return `${typeText} · ${locText}`;
   };
 
+  const isRainMode = activeFilter === "rain";
+
   return (
     <main className="min-h-screen">
       <section className="max-w-5xl mx-auto px-4 py-10 space-y-6">
@@ -236,7 +426,7 @@ export default function SensorsPage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-xs uppercase tracking-wide text-slate-500">
-                Stations · Klang Valley (simulated)
+                Stations · Klang Valley
               </p>
               <h1 className="text-2xl sm:text-3xl font-semibold leading-tight tracking-tight mt-1">
                 Live-style view of{" "}
@@ -247,12 +437,8 @@ export default function SensorsPage() {
               <p className="mt-2 text-sm text-slate-600 max-w-xl leading-relaxed">
                 Each dot here is a{" "}
                 <span className="font-medium">future sensor location</span>.
-                For now, they stream{" "}
-                <span className="text-sky-600 font-medium">
-                  simulated readings
-                </span>{" "}
-                so we can test dashboards, filters and ideas before touching any
-                real hardware.
+                Data streams from live public feeds when available, with fallback
+                simulation to keep the dashboard active.
               </p>
             </div>
 
@@ -347,18 +533,36 @@ export default function SensorsPage() {
   <div className="px-4 pt-4 pb-2 flex flex-wrap items-center justify-between gap-2">
     <div className="text-xs sm:text-sm text-slate-600">
       <p className="font-semibold">
-        Map view ({filtered.length} station{filtered.length === 1 ? "" : "s"})
+        Map view ({displayMarkers.length} station{displayMarkers.length === 1 ? "" : "s"})
       </p>
       <p className="text-[11px] text-slate-500">
         Markers follow your filters: type + location. Overlapping stations are fanned out with a tiny line back to their real spot.
       </p>
     </div>
+    {isRainMode && (
+      <div className="flex flex-wrap items-center gap-2 text-[11px]">
+        <button
+          type="button"
+          onClick={() => setShowRainLayer((v) => !v)}
+          className={[
+            "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 transition",
+            showRainLayer
+              ? "bg-sky-100 text-sky-700 border-sky-300"
+              : "bg-[var(--ws-bg-elevated)] text-slate-600 border-[var(--ws-border-subtle)]",
+          ].join(" ")}
+        >
+          <Droplets className="h-3.5 w-3.5" />
+          {showRainLayer ? "Rain layer on" : "Rain layer off"}
+        </button>
+        <span className="text-slate-500">Darker blue = heavier rain</span>
+      </div>
+    )}
   </div>
 
   <div className="h-72 sm:h-80">
     {isClient && (
       <MapContainer
-        center={[3.14, 101.69]}   // roughly Klang Valley
+        center={mapCenter}
         zoom={11}
         scrollWheelZoom={false}
         className="h-full w-full rounded-b-2xl"
@@ -367,6 +571,51 @@ export default function SensorsPage() {
           attribution='&copy; OpenStreetMap contributors, OSM Humanitarian'
           url="https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png"
         />
+
+        {isRainMode &&
+          showRainLayer &&
+          rainLayerCells.map((cell) => {
+            const style = rainLayerStyle(cell.value);
+            if (!style) return null;
+            return (
+              <React.Fragment key={`rain-layer-${cell.key}`}>
+                <Circle
+                  center={[cell.lat, cell.lng]}
+                  radius={style.outerRadius}
+                  pathOptions={{
+                    stroke: false,
+                    fillColor: style.color,
+                    fillOpacity: style.outerOpacity,
+                  }}
+                />
+                <Circle
+                  center={[cell.lat, cell.lng]}
+                  radius={style.midRadius}
+                  pathOptions={{
+                    stroke: false,
+                    fillColor: style.color,
+                    fillOpacity: style.midOpacity,
+                  }}
+                />
+                <Circle
+                  center={[cell.lat, cell.lng]}
+                  radius={style.coreRadius}
+                  pathOptions={{
+                    stroke: false,
+                    fillColor: style.color,
+                    fillOpacity: style.coreOpacity,
+                  }}
+                >
+                  <Tooltip direction="top" offset={[0, -2]} opacity={1}>
+                    <div className="text-[11px]">
+                      <div className="font-semibold">{cell.stationName}</div>
+                      <div className="text-slate-600">Rain: {cell.value} mm/h</div>
+                    </div>
+                  </Tooltip>
+                </Circle>
+              </React.Fragment>
+            );
+          })}
 
         {displayMarkers.map((marker) => (
           <React.Fragment key={marker.sensor.id}>
@@ -456,7 +705,7 @@ export default function SensorsPage() {
           <th className="text-left px-4 py-2 font-medium hidden sm:table-cell">
             Lat / Lon
           </th>
-          <th className="text-left px-4 py-2 font-medium">Unit</th>
+          <th className="text-left px-4 py-2 font-medium">Latest value</th>
           <th className="text-left px-4 py-2 font-medium">Last ping</th>
           <th className="text-left px-4 py-2 font-medium">Status</th>
         </tr>
@@ -504,17 +753,19 @@ export default function SensorsPage() {
 
               {/* Lat / Lon (hide on very small screens) */}
               <td className="px-4 py-2 align-middle text-[11px] text-slate-500 hidden sm:table-cell">
-                {sensor.latitude.toFixed(3)}, {sensor.longitude.toFixed(3)}
+                {hasCoordinates(sensor)
+                  ? `${sensor.latitude!.toFixed(3)}, ${sensor.longitude!.toFixed(3)}`
+                  : "—"}
               </td>
 
-              {/* Unit */}
+              {/* Latest value */}
               <td className="px-4 py-2 align-middle text-[11px] text-slate-600">
-                {sensor.unit}
+                {getLatestValue(sensor)}
               </td>
 
-              {/* Last ping (fake for now) */}
+              {/* Last ping */}
               <td className="px-4 py-2 align-middle text-[11px] text-slate-500">
-                {getFakeLastPing(sensor, i)}
+                {getLastPing(sensor)}
               </td>
 
               {/* Status */}

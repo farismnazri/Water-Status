@@ -8,6 +8,7 @@ type CartItem = {
   id: string;
   name: string;
   price: string;
+  image?: string;
   quantity?: number;
 };
 
@@ -17,6 +18,12 @@ function getCartKeyForUser(userId: string | null) {
 }
 
 const API_BASE = "http://127.0.0.1:8000";
+
+const PRODUCT_IMAGE_BY_ID: Record<string, string> = {
+  "starter-kit": "/images/basic.png",
+  "neighbour-bundle": "/images/bundle.png",
+  "community-pack": "/images/superbundle.png",
+};
 
 function parsePriceToNumber(priceStr: string): number {
   const match = priceStr.match(/([\d.]+)/);
@@ -115,6 +122,11 @@ export default function CartPage() {
     saveCart(next);
   }
 
+  function getItemImage(item: CartItem): string | null {
+    if (item.image) return item.image;
+    return PRODUCT_IMAGE_BY_ID[item.id] || null;
+  }
+
     async function handleCheckout() {
     if (!items.length) return;
 
@@ -169,17 +181,11 @@ export default function CartPage() {
       <section className="max-w-5xl mx-auto px-4 py-10 space-y-6">
         {/* Header */}
         <div className="ws-card p-6 space-y-2">
-          <p className="text-xs uppercase tracking-wide text-slate-500">
-            Cart
-          </p>
           <h1 className="text-2xl sm:text-3xl font-semibold leading-tight tracking-tight">
-            Your cart
-          </h1>
-          <p className="text-xs text-slate-600">
-            {userName === "Guest"
+              {userName === "Guest"
               ? "You are browsing as Guest. Set an active user on the Users page to keep carts separate."
               : `Cart for ${userName}`}
-          </p>
+          </h1>
         </div>
 
         {/* Cart body */}
@@ -198,15 +204,26 @@ export default function CartPage() {
                 {items.map((it) => (
                   <li
                     key={it.id}
-                    className="flex items-center justify-between gap-3 border-b border-[var(--ws-border-subtle)] pb-2"
+                    className="flex items-center justify-between gap-3 border-b border-[var(--ws-border-subtle)] pb-3"
                   >
-                    <div>
-                      <p className="font-semibold text-slate-800">
-                        {it.name}
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        {it.price}
-                      </p>
+                    <div className="flex items-center gap-3 min-w-0">
+                      {getItemImage(it) ? (
+                        <img
+                          src={getItemImage(it)!}
+                          alt={it.name}
+                          className="h-40 w-40 rounded-xl border border-[var(--ws-border-subtle)] bg-white object-contain p-2 shadow-sm"
+                        />
+                      ) : (
+                        <div className="h-12 w-12 rounded-lg border border-[var(--ws-border-subtle)] bg-slate-100" />
+                      )}
+                      <div className="min-w-0">
+                        <p className="text-[15px] font-semibold text-slate-800 truncate">
+                          {it.name}
+                        </p>
+                        <p className="text-[30px] text-slate-500">
+                          {it.price}
+                        </p>
+                      </div>
                     </div>
 
                     <div className="flex items-center gap-2">
@@ -244,13 +261,13 @@ export default function CartPage() {
     {totalItems} item{totalItems === 1 ? "" : "s"}
   </span>
   <div className="flex items-center gap-3">
-    <span className="font-semibold text-slate-800">
+    <span className="text-[20px] font-semibold text-slate-800">
       Approx total: RM {totalPrice.toFixed(2)}
     </span>
     <button
       type="button"
       onClick={handleCheckout}
-      className="px-3 py-1.5 rounded-full bg-sky-600 text-white text-[11px] font-medium hover:bg-sky-700 transition"
+      className="text-[15px] px-3 py-1.5 rounded-full bg-sky-600 text-white text-[11px] font-medium hover:bg-sky-700 transition"
     >
       Checkout (test)
     </button>
