@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import type { Route } from "./+types/cart";
+import { API_BASE } from "../lib/api";
 
 type CartItem = {
   id: string;
@@ -16,8 +17,6 @@ type CartItem = {
 function getCartKeyForUser(userId: string | null) {
   return userId ? `wsCart:${userId}` : "wsCart:guest";
 }
-
-const API_BASE = "http://127.0.0.1:8000";
 
 const PRODUCT_IMAGE_BY_ID: Record<string, string> = {
   "starter-kit": "/images/basic.png",

@@ -34,6 +34,12 @@ npm run dev
 
 Your application will be available at `http://localhost:5173`.
 
+Set local API base URL:
+
+```bash
+echo "VITE_API_BASE_URL=http://127.0.0.1:8000" > .env
+```
+
 ## Building for Production
 
 Create a production build:
@@ -43,6 +49,12 @@ npm run build
 ```
 
 ## Deployment
+
+Set frontend environment variable:
+
+- `VITE_API_BASE_URL=https://<your-backend-service>.onrender.com`
+
+If missing, the app falls back to same-origin in production and `http://127.0.0.1:8000` on localhost.
 
 ### Docker Deployment
 

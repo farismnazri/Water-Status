@@ -1,7 +1,7 @@
 """Lightweight persistence layer.
 
-Defaults to a local SQLite file so the app can run without MongoDB.
-When MONGO_URL is provided and USE_SQLITE is false, we still allow Mongo.
+Defaults to SQLite only when no Mongo URL is configured.
+Set USE_SQLITE=1 to force SQLite even when MONGO_URL exists.
 """
 
 import asyncio
@@ -17,9 +17,13 @@ from dotenv import load_dotenv
 # Load .env from the Backend folder
 load_dotenv()
 
-USE_SQLITE = os.getenv("USE_SQLITE", "1").lower() in {"1", "true", "yes"}
 MONGO_URL = os.getenv("MONGO_URL")
 DB_NAME = os.getenv("MONGO_DB_NAME", "water_status")
+_use_sqlite_raw = os.getenv("USE_SQLITE")
+if _use_sqlite_raw is None:
+    USE_SQLITE = not bool(MONGO_URL)
+else:
+    USE_SQLITE = _use_sqlite_raw.lower() in {"1", "true", "yes"}
 
 
 # ---------------------------------------------------------------------------

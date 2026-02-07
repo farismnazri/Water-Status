@@ -22,6 +22,7 @@ import {
   Circle,
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
+import { API_BASE } from "../lib/api";
 
 
 export function meta({}: Route.MetaArgs) {
@@ -55,8 +56,6 @@ type LatestReading = {
 };
 
 type FilterKey = "all" | "rain" | "water_level" | "temperature";
-
-const API_BASE = "http://127.0.0.1:8000";
 
 function markerColorForType(type: Sensor["type"]): string {
   if (type === "rain") return "#0ea5e9";         // sky blue

@@ -2,8 +2,7 @@
 import { useEffect, useState } from "react";
 import type { Route } from "./+types/users";
 import { AlertCircle, UserPlus, UserCircle2, Trash2 } from "lucide-react";
-
-const API_BASE = "http://127.0.0.1:8000";
+import { API_BASE } from "../lib/api";
 
 type User = {
   id: string;
