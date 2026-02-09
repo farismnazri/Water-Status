@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import sqlite3
+from pymongo import MongoClient as SyncMongoClient
 from types import SimpleNamespace
 from typing import Any, Iterable
 
@@ -24,6 +25,23 @@ if _use_sqlite_raw is None:
     USE_SQLITE = not bool(MONGO_URL)
 else:
     USE_SQLITE = _use_sqlite_raw.lower() in {"1", "true", "yes"}
+
+
+def _can_connect_to_mongo(url: str | None) -> bool:
+    if not url:
+        return False
+    timeout_ms = int(os.getenv("MONGO_PING_TIMEOUT_MS", "3000"))
+    try:
+        client = SyncMongoClient(url, serverSelectionTimeoutMS=timeout_ms)
+        client.admin.command("ping")
+        client.close()
+        return True
+    except Exception:
+        return False
+
+
+MONGO_CONNECTION_OK = _can_connect_to_mongo(MONGO_URL) if not USE_SQLITE else False
+EFFECTIVE_USE_SQLITE = USE_SQLITE or not bool(MONGO_URL) or not MONGO_CONNECTION_OK
 
 
 # ---------------------------------------------------------------------------
@@ -271,7 +289,7 @@ class SQLiteCollection:
         return SimpleNamespace(deleted_count=deleted)
 
 
-if USE_SQLITE or not MONGO_URL:
+if EFFECTIVE_USE_SQLITE:
     DB_PATH = os.getenv("SQLITE_PATH", os.path.join(os.path.dirname(__file__), "local_data.sqlite"))
 
     # Build a namespace that mimics the Mongo db object

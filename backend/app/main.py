@@ -1,14 +1,19 @@
 import asyncio
+import base64
+import hashlib
+import hmac
+import json
 import logging
 import os
 import copy
+import re
 import time
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 from bson import ObjectId
 from datetime import datetime, timedelta
-from typing import Optional, List
+from typing import Any, Optional, List
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
 
@@ -309,16 +314,305 @@ async def _shutdown_sensor_ingest() -> None:
 
 ALLOWED_PLANS = ["free", "plus", "ultra"]
 
+USERNAME_PATTERN = re.compile(r"^[a-z0-9._-]{3,32}$")
+EMAIL_PATTERN = re.compile(r"^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$")
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_MAX_LENGTH = 128
+PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
+PBKDF2_ITERATIONS = int(os.getenv("PASSWORD_HASH_ITERATIONS", "260000"))
+AUTH_TOKEN_TTL_SECONDS = int(os.getenv("AUTH_TOKEN_TTL_SECONDS", "28800"))
+AUTH_TOKEN_SECRET = os.getenv("AUTH_TOKEN_SECRET", "water-status-dev-secret")
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin").strip().lower()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "adminwaterstatus")
+SENSITIVE_USER_FIELDS = {"password_hash", "password"}
+
+
+def _b64url_encode(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode("ascii").rstrip("=")
+
+
+def _b64url_decode(raw: str) -> bytes:
+    padding = "=" * ((4 - len(raw) % 4) % 4)
+    return base64.urlsafe_b64decode(raw + padding)
+
+
+def sanitize_username(raw: str) -> str:
+    cleaned = "".join(ch for ch in (raw or "").strip().lower() if ch.isalnum() or ch in "._-")
+    if not USERNAME_PATTERN.fullmatch(cleaned):
+        raise HTTPException(
+            status_code=400,
+            detail="Username must be 3-32 chars and use only letters, numbers, dot, underscore, or hyphen.",
+        )
+    return cleaned
+
+
+def sanitize_email(raw: str) -> str:
+    cleaned = (raw or "").strip().lower()
+    if not EMAIL_PATTERN.fullmatch(cleaned):
+        raise HTTPException(status_code=400, detail="Invalid email format.")
+    return cleaned
+
+
+def sanitize_name(raw: str) -> str:
+    cleaned = re.sub(r"\s+", " ", (raw or "").strip())
+    cleaned = "".join(ch for ch in cleaned if ch.isprintable())
+    if len(cleaned) < 2:
+        raise HTTPException(status_code=400, detail="Name must be at least 2 characters.")
+    return cleaned[:64]
+
+
+def sanitize_password(raw: str) -> str:
+    if not isinstance(raw, str):
+        raise HTTPException(status_code=400, detail="Password is required.")
+    if len(raw) < PASSWORD_MIN_LENGTH or len(raw) > PASSWORD_MAX_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Password must be {PASSWORD_MIN_LENGTH}-{PASSWORD_MAX_LENGTH} characters.",
+        )
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in raw):
+        raise HTTPException(status_code=400, detail="Password contains invalid characters.")
+    return raw
+
+
+def validate_plan_confirmation(plan: str, plan_confirmation: str | None) -> None:
+    normalized = (plan or "").strip().lower()
+    if normalized == "free":
+        return
+
+    expected_map = {
+        "plus": "Plus",
+        "ultra": "Ultra",
+    }
+    expected = expected_map.get(normalized)
+    if not expected:
+        raise HTTPException(status_code=400, detail=f"Invalid plan. Allowed plans: {ALLOWED_PLANS}")
+
+    provided = (plan_confirmation or "").strip()
+    if provided != expected:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid plan access key.",
+        )
+
+
+def _derive_username(name: str, user_id: str | None = None) -> str:
+    base = "".join(ch for ch in (name or "").strip().lower() if ch.isalnum() or ch in "._-")
+    if len(base) >= 3:
+        return base[:32]
+
+    suffix = (user_id or str(int(time.time() * 1000)))[-6:]
+    return f"user{suffix}"
+
+
+def _hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        salt,
+        PBKDF2_ITERATIONS,
+    )
+    return (
+        f"{PASSWORD_HASH_SCHEME}${PBKDF2_ITERATIONS}$"
+        f"{_b64url_encode(salt)}${_b64url_encode(digest)}"
+    )
+
+
+def _verify_password(password: str, stored: str | None) -> bool:
+    if not stored:
+        return False
+
+    try:
+        scheme, iter_raw, salt_raw, digest_raw = stored.split("$", 3)
+        if scheme != PASSWORD_HASH_SCHEME:
+            return False
+        iterations = int(iter_raw)
+        salt = _b64url_decode(salt_raw)
+        expected = _b64url_decode(digest_raw)
+        current = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            salt,
+            iterations,
+        )
+        return hmac.compare_digest(current, expected)
+    except Exception:
+        return False
+
+
+def _create_token(payload: dict) -> str:
+    payload_bytes = json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    payload_b64 = _b64url_encode(payload_bytes)
+    signature = hmac.new(
+        AUTH_TOKEN_SECRET.encode("utf-8"),
+        payload_b64.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    return f"{payload_b64}.{_b64url_encode(signature)}"
+
+
+def _decode_token(token: str) -> dict:
+    try:
+        payload_b64, sig_b64 = token.split(".", 1)
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid token.")
+
+    expected_sig = hmac.new(
+        AUTH_TOKEN_SECRET.encode("utf-8"),
+        payload_b64.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    actual_sig = _b64url_decode(sig_b64)
+    if not hmac.compare_digest(expected_sig, actual_sig):
+        raise HTTPException(status_code=401, detail="Invalid token signature.")
+
+    try:
+        payload = json.loads(_b64url_decode(payload_b64).decode("utf-8"))
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid token payload.")
+
+    if int(payload.get("exp", 0)) < int(time.time()):
+        raise HTTPException(status_code=401, detail="Token expired.")
+
+    return payload
+
+
+def _read_bearer_token(authorization: str | None) -> str:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header.")
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid Authorization header.")
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing bearer token.")
+    return token
+
+
+def _require_admin(authorization: str | None) -> dict:
+    token = _read_bearer_token(authorization)
+    payload = _decode_token(token)
+    if payload.get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    return payload
+
+
+def _safe_user_response(doc: dict) -> dict:
+    user = {k: v for k, v in doc.items() if k not in SENSITIVE_USER_FIELDS}
+    if "_id" in user:
+        user["id"] = str(user["_id"])
+        del user["_id"]
+
+    user_id = str(user.get("id") or "")
+    username = str(user.get("username") or "").strip().lower()
+    if not username:
+        username = _derive_username(str(user.get("name") or ""), user_id)
+    user["username"] = username
+
+    if not user.get("name"):
+        user["name"] = username
+    if not user.get("plan") or user.get("plan") not in ALLOWED_PLANS:
+        user["plan"] = "free"
+    if user.get("email") is None:
+        user["email"] = ""
+    return user
+
+
+def _ids_match(left: Any, right: Any) -> bool:
+    if left is None or right is None:
+        return False
+    return str(left) == str(right)
+
+
+async def _find_user_by_username(username: str) -> dict | None:
+    try:
+        doc = await db.users.find_one({"username": username})
+        if doc:
+            return doc
+
+        cursor = db.users.find()
+        async for candidate in cursor:
+            normalized = _safe_user_response(candidate).get("username")
+            if normalized == username:
+                return candidate
+    except Exception:
+        for candidate in _fallback_users:
+            normalized = _safe_user_response(candidate).get("username")
+            if normalized == username:
+                return candidate
+    return None
+
+
+async def _find_user_by_email(email: str) -> dict | None:
+    try:
+        return await db.users.find_one({"email": email})
+    except Exception:
+        for candidate in _fallback_users:
+            if str(candidate.get("email") or "").strip().lower() == email:
+                return candidate
+    return None
+
+
+async def _next_available_username(base: str, strict: bool) -> str:
+    candidate = base
+    suffix_counter = 1
+    while True:
+        existing = await _find_user_by_username(candidate)
+        if not existing:
+            return candidate
+
+        if strict:
+            raise HTTPException(status_code=409, detail="Username already exists.")
+
+        suffix = f"-{suffix_counter}"
+        prefix = base[: max(1, 32 - len(suffix))]
+        candidate = f"{prefix}{suffix}"
+        suffix_counter += 1
+        if suffix_counter > 1000:
+            raise HTTPException(status_code=500, detail="Could not allocate username.")
+
+
+def _new_auth_token(subject: str, role: str, username: str) -> str:
+    now = int(time.time())
+    payload = {
+        "sub": subject,
+        "role": role,
+        "username": username,
+        "iat": now,
+        "exp": now + AUTH_TOKEN_TTL_SECONDS,
+    }
+    return _create_token(payload)
+
+
 class UserCreate(BaseModel):
     name: str
-    email: str = "@gmail.com" #pre-fills the email
+    email: str = "user@gmail.com"
     plan: str = "free"  # later: free / plus / ultra
+    username: Optional[str] = None
+    password: Optional[str] = None
+
+
+class RegisterPayload(BaseModel):
+    username: str
+    email: str
+    password: str
+    plan: str = "free"
+    plan_confirmation: Optional[str] = None
+
+
+class LoginPayload(BaseModel):
+    username: str
+    password: str
+
+
+class AdminDeleteUserPayload(BaseModel):
+    confirm_username: str
 
 class UserUpdatePlan(BaseModel):
     plan: str
 
 class UserUpdate(BaseModel):
     name: Optional[str] = None
+    username: Optional[str] = None
     email: Optional[str] = None
     plan: Optional[str] = None
 
@@ -535,33 +829,188 @@ async def delete_sensor(sensor_id: str):
 
     return {"id": sensor_id, "deleted": True}
 
+def _coerce_user_id(user_id: str):
+    try:
+        return ObjectId(user_id)
+    except Exception:
+        return user_id
+
+
+@app.post("/auth/register")
+async def register(payload: RegisterPayload):
+    username = sanitize_username(payload.username)
+    email = sanitize_email(payload.email)
+    password = sanitize_password(payload.password)
+    plan = (payload.plan or "free").strip().lower()
+
+    if username == ADMIN_USERNAME:
+        raise HTTPException(status_code=400, detail="That username is reserved.")
+    if plan not in ALLOWED_PLANS:
+        raise HTTPException(status_code=400, detail=f"Invalid plan. Allowed plans: {ALLOWED_PLANS}")
+    validate_plan_confirmation(plan, payload.plan_confirmation)
+
+    if await _find_user_by_username(username):
+        raise HTTPException(status_code=409, detail="Username already exists.")
+    if await _find_user_by_email(email):
+        raise HTTPException(status_code=409, detail="Email already in use.")
+
+    doc = {
+        "_id": ObjectId(),
+        "username": username,
+        "name": username,
+        "email": email,
+        "plan": plan,
+        "password_hash": _hash_password(password),
+        "created_at": datetime.utcnow(),
+    }
+
+    try:
+        inserted = await db.users.insert_one({k: v for k, v in doc.items() if k != "_id"})
+        doc["_id"] = inserted.inserted_id
+    except Exception:
+        _fallback_users.append(doc)
+
+    safe_user = _safe_user_response(doc)
+    return {
+        "token": _new_auth_token(safe_user["id"], "user", safe_user["username"]),
+        "role": "user",
+        "user": safe_user,
+    }
+
+
+@app.post("/auth/login")
+async def login(payload: LoginPayload):
+    username = sanitize_username(payload.username)
+    password = sanitize_password(payload.password)
+
+    if username == ADMIN_USERNAME:
+        if not hmac.compare_digest(password, ADMIN_PASSWORD):
+            raise HTTPException(status_code=401, detail="Invalid username or password.")
+        return {
+            "token": _new_auth_token("admin", "admin", ADMIN_USERNAME),
+            "role": "admin",
+            "user": {"username": ADMIN_USERNAME},
+        }
+
+    user_doc = await _find_user_by_username(username)
+    if not user_doc:
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+    if not _verify_password(password, user_doc.get("password_hash")):
+        raise HTTPException(status_code=401, detail="Invalid username or password.")
+
+    safe_user = _safe_user_response(user_doc)
+    return {
+        "token": _new_auth_token(safe_user["id"], "user", safe_user["username"]),
+        "role": "user",
+        "user": safe_user,
+    }
+
+
+@app.get("/admin/users")
+async def admin_list_users(authorization: str | None = Header(default=None)):
+    _require_admin(authorization)
+
+    users: list[dict] = []
+    try:
+        cursor = db.users.find()
+        async for doc in cursor:
+            safe_user = _safe_user_response(doc)
+            users.append(
+                {
+                    "id": safe_user["id"],
+                    "username": safe_user["username"],
+                    "email": safe_user.get("email", ""),
+                }
+            )
+    except Exception:
+        for doc in _fallback_users:
+            safe_user = _safe_user_response(doc)
+            users.append(
+                {
+                    "id": safe_user["id"],
+                    "username": safe_user["username"],
+                    "email": safe_user.get("email", ""),
+                }
+            )
+
+    users.sort(key=lambda u: (u.get("username") or ""))
+    return {"users": users}
+
+
+@app.delete("/admin/users/{user_id}")
+async def admin_delete_user(
+    user_id: str,
+    payload: AdminDeleteUserPayload,
+    authorization: str | None = Header(default=None),
+):
+    _require_admin(authorization)
+    expected_username = sanitize_username(payload.confirm_username)
+    lookup_id = _coerce_user_id(user_id)
+
+    try:
+        user = await db.users.find_one({"_id": lookup_id})
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        safe_user = _safe_user_response(user)
+        if safe_user.get("username") != expected_username:
+            raise HTTPException(status_code=400, detail="Username confirmation does not match.")
+
+        await db.users.delete_one({"_id": lookup_id})
+        await db.user_reports.delete_many({"user_id": lookup_id})
+        return {"id": safe_user["id"], "username": safe_user["username"], "deleted": True}
+    except HTTPException:
+        raise
+    except Exception:
+        u = _get_fallback_user(user_id)
+        if u is None:
+            raise HTTPException(status_code=404, detail="User not found.")
+
+        safe_user = _safe_user_response(u)
+        if safe_user.get("username") != expected_username:
+            raise HTTPException(status_code=400, detail="Username confirmation does not match.")
+
+        _fallback_users[:] = [x for x in _fallback_users if str(x["_id"]) != user_id]
+        return {"id": safe_user["id"], "username": safe_user["username"], "deleted": True}
+
+
 @app.post("/users")
 async def create_user(user: UserCreate):
-    user_dict = user.model_dump()
+    name = sanitize_name(user.name)
+    email = sanitize_email(user.email)
+    plan = (user.plan or "free").strip().lower()
+    if plan not in ALLOWED_PLANS:
+        raise HTTPException(status_code=400, detail=f"Invalid plan. Allowed plans: {ALLOWED_PLANS}")
+
+    requested_username = user.username if user.username is not None else _derive_username(name)
+    base_username = sanitize_username(requested_username)
+    if base_username == ADMIN_USERNAME:
+        raise HTTPException(status_code=400, detail="That username is reserved.")
+
+    username = await _next_available_username(base_username, strict=user.username is not None)
+    password_hash = None
+    if user.password:
+        password_hash = _hash_password(sanitize_password(user.password))
+
+    user_dict = {
+        "name": name,
+        "username": username,
+        "email": email,
+        "plan": plan,
+        "created_at": datetime.utcnow(),
+    }
+    if password_hash:
+        user_dict["password_hash"] = password_hash
+
     try:
         result = await db.users.insert_one(user_dict)
-        return {
-            "id": str(result.inserted_id),
-            "name": user_dict.get("name"),
-            "email": user_dict.get("email"),
-            "plan": user_dict.get("plan"),
-        }
+        stored_doc = {"_id": result.inserted_id, **user_dict}
+        return _safe_user_response(stored_doc)
     except Exception:
-        # fallback in-memory user
-        doc = {
-            "_id": ObjectId(),
-            "name": user_dict.get("name"),
-            "email": user_dict.get("email"),
-            "plan": user_dict.get("plan"),
-            "created_at": datetime.utcnow(),
-        }
+        doc = {"_id": ObjectId(), **user_dict}
         _fallback_users.append(doc)
-        return {
-            "id": str(doc["_id"]),
-            "name": doc.get("name"),
-            "email": doc.get("email"),
-            "plan": doc.get("plan"),
-        }
+        return _safe_user_response(doc)
 
 
 @app.get("/users")
@@ -570,36 +1019,41 @@ async def list_users():
     try:
         cursor = db.users.find()
         async for doc in cursor:
-            doc["id"] = str(doc["_id"])
-            del doc["_id"]
-            users.append(doc)
+            users.append(_safe_user_response(doc))
     except Exception:
-        users = [_fallback_user_dict(u) for u in _fallback_users]
-
+        users = [_safe_user_response(u) for u in _fallback_users]
     return {"users": users}
+
 
 @app.patch("/users/{user_id}")
 async def update_user(user_id: str, payload: UserUpdate):
-    try:
-        oid = ObjectId(user_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
-
+    oid = _coerce_user_id(user_id)
     updates = {}
 
     if payload.name is not None:
-        updates["name"] = payload.name
+        updates["name"] = sanitize_name(payload.name)
+
+    if payload.username is not None:
+        requested = sanitize_username(payload.username)
+        if requested == ADMIN_USERNAME:
+            raise HTTPException(status_code=400, detail="That username is reserved.")
+
+        existing_user = await _find_user_by_username(requested)
+        if existing_user and str(existing_user.get("_id")) != str(oid):
+            raise HTTPException(status_code=409, detail="Username already exists.")
+        updates["username"] = requested
 
     if payload.email is not None:
-        updates["email"] = payload.email
+        updates["email"] = sanitize_email(payload.email)
 
     if payload.plan is not None:
-        if payload.plan not in ALLOWED_PLANS:
+        normalized_plan = payload.plan.strip().lower()
+        if normalized_plan not in ALLOWED_PLANS:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid plan. Allowed plans: {ALLOWED_PLANS}",
             )
-        updates["plan"] = payload.plan
+        updates["plan"] = normalized_plan
 
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -610,30 +1064,26 @@ async def update_user(user_id: str, payload: UserUpdate):
             raise HTTPException(status_code=404, detail="User not found")
 
         doc = await db.users.find_one({"_id": oid})
-        doc["id"] = str(doc["_id"])
-        del doc["_id"]
-        return doc
+        return _safe_user_response(doc)
+    except HTTPException:
+        raise
     except Exception:
         u = _get_fallback_user(user_id)
         if u is None:
             raise HTTPException(status_code=404, detail="User not found")
         u.update(updates)
-        return _fallback_user_dict(u)
+        return _safe_user_response(u)
+
 
 @app.patch("/users/{user_id}/plan")
 async def update_user_plan(user_id: str, payload: UserUpdatePlan):
-    # 1. Validate requested plan
     if payload.plan not in ALLOWED_PLANS:
         raise HTTPException(
             status_code=400,
             detail=f"Invalid plan. Allowed plans: {ALLOWED_PLANS}",
         )
 
-    # 2. Convert string ID to Mongo ObjectId
-    try:
-        oid = ObjectId(user_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
+    oid = _coerce_user_id(user_id)
 
     try:
         result = await db.users.update_one(
@@ -644,6 +1094,8 @@ async def update_user_plan(user_id: str, payload: UserUpdatePlan):
         if result.matched_count == 0:
             raise HTTPException(status_code=404, detail="User not found")
         return {"id": user_id, "new_plan": payload.plan}
+    except HTTPException:
+        raise
     except Exception:
         u = _get_fallback_user(user_id)
         if u is None:
@@ -651,38 +1103,28 @@ async def update_user_plan(user_id: str, payload: UserUpdatePlan):
         u["plan"] = payload.plan
         return {"id": user_id, "new_plan": payload.plan}
 
+
 @app.get("/users/{user_id}")
 async def get_user(user_id: str):
-    try:
-        oid = ObjectId(user_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
-
+    oid = _coerce_user_id(user_id)
     try:
         doc = await db.users.find_one({"_id": oid})
         if not doc:
             raise HTTPException(status_code=404, detail="User not found")
-        doc["id"] = str(doc["_id"])
-        del doc["_id"]
-        return doc
+        return _safe_user_response(doc)
+    except HTTPException:
+        raise
     except Exception:
         u = _get_fallback_user(user_id)
         if u is None:
             raise HTTPException(status_code=404, detail="User not found")
-        return _fallback_user_dict(u)
+        return _safe_user_response(u)
+
 
 @app.delete("/users/{user_id}")
-async def delete_user(user_id: str):
-    """
-    Delete a user by ID.
-    Optionally also delete their user_reports so we don't leave orphans.
-    """
-    # 1) Validate ObjectId
-    try:
-        oid = ObjectId(user_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
-
+async def delete_user(user_id: str, authorization: str | None = Header(default=None)):
+    _require_admin(authorization)
+    oid = _coerce_user_id(user_id)
     try:
         user = await db.users.find_one({"_id": oid})
         if not user:
@@ -690,6 +1132,8 @@ async def delete_user(user_id: str):
         await db.users.delete_one({"_id": oid})
         await db.user_reports.delete_many({"user_id": oid})
         return {"id": user_id, "deleted": True}
+    except HTTPException:
+        raise
     except Exception:
         u = _get_fallback_user(user_id)
         if u is None:
@@ -849,9 +1293,7 @@ async def list_user_reports(
 
             liked_by_me = False
             if current_oid is not None:
-                liked_by_me = any(
-                    isinstance(x, ObjectId) and x == current_oid for x in liked_by
-                )
+                liked_by_me = any(_ids_match(x, current_oid) for x in liked_by)
 
             doc["id"] = str(doc["_id"])
             doc["sensor_id"] = str(doc["sensor_id"])
@@ -903,7 +1345,7 @@ async def update_user_report(report_id: str, payload: UserReportUpdate):
     if not existing:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    if existing.get("user_id") != uid:
+    if not _ids_match(existing.get("user_id"), uid):
         raise HTTPException(
             status_code=403,
             detail="You can only edit your own reports.",
@@ -949,7 +1391,7 @@ async def update_user_report(report_id: str, payload: UserReportUpdate):
 
     liked_by_me = False
     if uid is not None:
-        liked_by_me = any(isinstance(x, ObjectId) and x == uid for x in liked_by)
+        liked_by_me = any(_ids_match(x, uid) for x in liked_by)
 
     doc["id"] = str(doc["_id"])
     doc["sensor_id"] = str(doc["sensor_id"])
@@ -984,7 +1426,7 @@ async def delete_user_report(report_id: str, user_id: str):
     if not doc:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    if doc.get("user_id") != uid:
+    if not _ids_match(doc.get("user_id"), uid):
         raise HTTPException(
             status_code=403,
             detail="You can only delete your own reports.",
@@ -1027,16 +1469,16 @@ async def toggle_like_user_report(report_id: str, payload: LikePayload):
     if not isinstance(liked_by, list):
         liked_by = []
 
-    is_liked = any(isinstance(x, ObjectId) and x == uid for x in liked_by)
+    is_liked = any(_ids_match(x, uid) for x in liked_by)
 
     if is_liked:
         # Unlike
-        liked_by = [x for x in liked_by if not (isinstance(x, ObjectId) and x == uid)]
+        liked_by = [x for x in liked_by if not _ids_match(x, uid)]
         likes = max(likes - 1, 0)
         liked = False
     else:
         # Like
-        liked_by.append(uid)
+        liked_by.append(str(uid))
         likes += 1
         liked = True
 
