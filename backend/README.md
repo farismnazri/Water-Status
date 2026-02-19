@@ -1,6 +1,7 @@
 # Backend Ops (Pi, systemd, quick tunnel)
 
 This setup keeps the API bound to `127.0.0.1:8000` and exposes it through a local Cloudflare quick tunnel service.
+The quick-tunnel unit is intentionally anti-thrash (`Restart=on-failure`, long restart delay, and start-limit controls) to avoid repeated 1015/429 rate limits.
 
 The systemd units are tracked in:
 - `backend/ops/systemd/waterstatus-api.service`
@@ -33,13 +34,19 @@ sudo systemctl enable --now waterstatus-quick-tunnel
 ```bash
 sudo systemctl status waterstatus-api --no-pager
 sudo systemctl status waterstatus-quick-tunnel --no-pager
-journalctl -u waterstatus-quick-tunnel -n 100 --no-pager
+sudo journalctl -u waterstatus-quick-tunnel -n 100 --no-pager
 ```
 
 ## Get current tunnel URL
 
 ```bash
 bash backend/ops/print_tunnel_url.sh
+```
+
+Direct command (same extraction used by the helper script):
+
+```bash
+sudo journalctl -u waterstatus-quick-tunnel -n 200 --no-pager | grep -o 'https://[^ ]*trycloudflare.com' | tail -n 1
 ```
 
 ## Health checks after reboot
@@ -56,6 +63,21 @@ Both services should be active after reboot (`waterstatus-api`, `waterstatus-qui
 - Run `bash backend/ops/print_tunnel_url.sh` to get the new `https://<...>.trycloudflare.com`
 - In Render (frontend static site), update env var `VITE_API_BASE` to that new URL
 - Trigger a redeploy (prefer “clear build cache and deploy” if available)
+
+## If quick tunnel is rate-limited (1015 / 429)
+
+- Stop the tunnel service so it does not keep retrying aggressively:
+
+```bash
+sudo systemctl stop waterstatus-quick-tunnel
+```
+
+- Watch logs and restart later after cooldown:
+
+```bash
+sudo journalctl -u waterstatus-quick-tunnel -n 100 --no-pager
+sudo systemctl start waterstatus-quick-tunnel
+```
 
 ## Cloudflared binary path note
 

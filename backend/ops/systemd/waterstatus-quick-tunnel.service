@@ -3,13 +3,15 @@ Description=Cloudflare quick tunnel for Water-Status API
 After=network-online.target waterstatus-api.service
 Wants=network-online.target
 Requires=waterstatus-api.service
+StartLimitIntervalSec=3600
+StartLimitBurst=1
 
 [Service]
 Type=simple
 User=faiz
 ExecStart=/usr/bin/cloudflared tunnel --url http://127.0.0.1:8000 --no-autoupdate
-Restart=always
-RestartSec=2
+Restart=on-failure
+RestartSec=1800
 
 [Install]
 WantedBy=multi-user.target
