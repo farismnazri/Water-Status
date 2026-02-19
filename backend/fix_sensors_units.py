@@ -1,26 +1,27 @@
-from dotenv import load_dotenv
-from pymongo import MongoClient
-import os
+import asyncio
 
-load_dotenv()  # loads MONGO_URL and MONGO_DB_NAME from .env
+from app.db import db
 
-mongo_url = os.getenv("MONGO_URL")
-db_name = os.getenv("MONGO_DB_NAME", "water_status")
 
-client = MongoClient(mongo_url)
-db = client[db_name]
+async def main() -> None:
+    before = len(await db.sensors.find({"unit": "string"}).to_list(length=None))
+    print(f"Sensors with unit='string' BEFORE update: {before}")
 
-# Show how many are wrong before
-before = db.sensors.count_documents({"unit": "string"})
-print(f"Sensors with unit='string' BEFORE update: {before}")
+    to_fix = await db.sensors.find({"type": "rain", "unit": "string"}).to_list(length=None)
 
-result = db.sensors.update_many(
-    {"type": "rain", "unit": "string"},
-    {"$set": {"unit": "mm/h"}}
-)
+    modified = 0
+    for sensor in to_fix:
+        result = await db.sensors.update_one(
+            {"_id": sensor["_id"]},
+            {"$set": {"unit": "mm/h"}},
+        )
+        modified += int(result.modified_count)
 
-print(f"Matched: {result.matched_count}, Modified: {result.modified_count}")
+    print(f"Matched: {len(to_fix)}, Modified: {modified}")
 
-# Show after
-after = db.sensors.count_documents({"unit": "string"})
-print(f"Sensors with unit='string' AFTER update: {after}")
+    after = len(await db.sensors.find({"unit": "string"}).to_list(length=None))
+    print(f"Sensors with unit='string' AFTER update: {after}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

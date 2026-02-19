@@ -10,8 +10,6 @@ from datetime import datetime, timedelta, timezone
 from html import unescape
 from typing import Any, Tuple, List, Dict
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
-
 WATER_LEVEL_URL = (
     "https://publicinfobanjir.water.gov.my/aras-air/"
     "data-paras-air/aras-air-data/?state=SEL&district=ALL&station=ALL"
@@ -427,7 +425,7 @@ def _parse_iso_datetime(text: str) -> datetime | None:
 
 
 async def _ensure_sensor(
-    db: AsyncIOMotorDatabase,
+    db: Any,
     *,
     external_id: str,
     name: str,
@@ -467,7 +465,7 @@ async def _fetch_station_details(url_template: str, station_numeric_id: int) -> 
     return lat, lon
 
 
-async def fetch_selangor_readings(db: AsyncIOMotorDatabase) -> list[dict[str, Any]]:
+async def fetch_selangor_readings(db: Any) -> list[dict[str, Any]]:
     """Fetch latest Selangor rainfall + river level readings and ensure sensors exist.
 
     Returns list of reading documents ready for persistence.

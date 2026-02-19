@@ -1,24 +1,12 @@
-from dotenv import load_dotenv
-from pymongo import MongoClient
-import os
+import asyncio
 
-# Load .env (MONGO_URL, MONGO_DB_NAME)
-load_dotenv()
-
-MONGO_URL = os.getenv("MONGO_URL")
-DB_NAME = os.getenv("MONGO_DB_NAME", "water_status")
-
-if not MONGO_URL:
-    raise RuntimeError("MONGO_URL is not set")
-
-client = MongoClient(MONGO_URL)
-db = client[DB_NAME]
+from app.db import db
 
 # Some sample sensors around KL for testing
-sample_sensors = [
+SAMPLE_SENSORS = [
     {
         "name": "KLCC 0001",
-        "type": "rain",          # already canonical
+        "type": "rain",
         "location": "KLCC",
         "unit": "mm/h",
         "latitude": 3.1562544,
@@ -108,9 +96,14 @@ sample_sensors = [
     },
 ]
 
-if __name__ == "__main__":
-    # Optional: clear existing sensors first (for fresh testing)
-    # db.sensors.delete_many({})
 
-    result = db.sensors.insert_many(sample_sensors)
-    print(f"Inserted {len(result.inserted_ids)} sensors.")
+async def main() -> None:
+    inserted = 0
+    for sensor in SAMPLE_SENSORS:
+        await db.sensors.insert_one(sensor)
+        inserted += 1
+    print(f"Inserted {inserted} sensors.")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

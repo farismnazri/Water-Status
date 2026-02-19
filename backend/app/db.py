@@ -9,20 +9,24 @@ import json
 import os
 import re
 import sqlite3
+from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from uuid import uuid4
 
-from bson import ObjectId
 from dotenv import load_dotenv
 
 if TYPE_CHECKING:
     import asyncpg
 
-# Load .env
-load_dotenv()
+# Load backend/.env deterministically regardless of process CWD.
+DOTENV_PATH = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=DOTENV_PATH)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 USE_POSTGRES = bool(DATABASE_URL)
+ACTIVE_BACKEND = "postgres" if USE_POSTGRES else "sqlite"
+SQLITE_PATH = os.getenv("SQLITE_PATH", os.path.join(os.path.dirname(__file__), "local_data.sqlite"))
 
 COLLECTION_NAMES = (
     "sensors",
@@ -59,16 +63,10 @@ class _CollectionHelpers:
     def _match(doc: dict[str, Any], query: dict[str, Any]) -> bool:
         for k, v in (query or {}).items():
             dv = doc.get(k)
-            if isinstance(dv, ObjectId):
-                dv = str(dv)
-            if isinstance(v, ObjectId):
-                v = str(v)
 
-            # Support a small subset of Mongo-style operators used in this app.
+            # Support a small subset of query operators used in this app.
             if isinstance(v, dict):
                 for op, op_val in v.items():
-                    if isinstance(op_val, ObjectId):
-                        op_val = str(op_val)
                     if hasattr(op_val, "isoformat"):
                         op_val = op_val.isoformat()
                     if hasattr(dv, "isoformat"):
@@ -106,8 +104,6 @@ class _CollectionHelpers:
     @staticmethod
     def _encode_doc(doc: dict[str, Any]) -> dict[str, Any]:
         def enc_val(val: Any):
-            if isinstance(val, ObjectId):
-                return str(val)
             if isinstance(val, (str, int, float, bool)) or val is None:
                 return val
             if hasattr(val, "isoformat"):
@@ -254,7 +250,7 @@ class SQLiteCollection(_CollectionHelpers):
     async def insert_one(self, doc: dict[str, Any]):
         encoded = self._encode_doc(doc)
         if "_id" not in encoded:
-            encoded["_id"] = str(ObjectId())
+            encoded["_id"] = str(uuid4())
 
         def _work():
             with sqlite3.connect(self.conn_path) as conn:
@@ -293,7 +289,7 @@ class SQLiteCollection(_CollectionHelpers):
                 if matched == 0 and upsert:
                     new_doc = dict(update.get("$set", {}))
                     if "_id" not in new_doc:
-                        new_doc["_id"] = str(ObjectId())
+                        new_doc["_id"] = str(uuid4())
                     new_doc = self._encode_doc(new_doc)
                     conn.execute(
                         f"INSERT INTO {_quote_identifier(self.name)} (_id, doc) VALUES (?, ?)",
@@ -444,7 +440,7 @@ class PostgresCollection(_CollectionHelpers):
     async def insert_one(self, doc: dict[str, Any]):
         encoded = self._encode_doc(doc)
         if "_id" not in encoded:
-            encoded["_id"] = str(ObjectId())
+            encoded["_id"] = str(uuid4())
         await self._upsert_doc(encoded)
         return SimpleNamespace(inserted_id=str(encoded["_id"]))
 
@@ -468,7 +464,7 @@ class PostgresCollection(_CollectionHelpers):
         if upsert:
             new_doc = dict(update.get("$set", {}))
             if "_id" not in new_doc:
-                new_doc["_id"] = str(ObjectId())
+                new_doc["_id"] = str(uuid4())
             new_doc = self._encode_doc(new_doc)
             await self._upsert_doc(new_doc)
             matched = 1
@@ -537,10 +533,28 @@ if USE_POSTGRES:
     db.user_reports = PostgresCollection("user_reports")
 else:
     print("USING SQLITE")
-    DB_PATH = os.getenv("SQLITE_PATH", os.path.join(os.path.dirname(__file__), "local_data.sqlite"))
     db = SimpleNamespace()
-    db.sensors = SQLiteCollection(DB_PATH, "sensors")
-    db.sensor_readings = SQLiteCollection(DB_PATH, "sensor_readings")
-    db.users = SQLiteCollection(DB_PATH, "users")
-    db.reports = SQLiteCollection(DB_PATH, "reports")
-    db.user_reports = SQLiteCollection(DB_PATH, "user_reports")
+    db.sensors = SQLiteCollection(SQLITE_PATH, "sensors")
+    db.sensor_readings = SQLiteCollection(SQLITE_PATH, "sensor_readings")
+    db.users = SQLiteCollection(SQLITE_PATH, "users")
+    db.reports = SQLiteCollection(SQLITE_PATH, "reports")
+    db.user_reports = SQLiteCollection(SQLITE_PATH, "user_reports")
+
+
+async def ping_database() -> None:
+    """Raise on connectivity failure."""
+    if USE_POSTGRES:
+        pool = await _get_pg_pool()
+        async with pool.acquire() as conn:
+            value = await conn.fetchval("SELECT 1")
+        if value != 1:
+            raise RuntimeError(f"Unexpected Postgres ping response: {value!r}")
+        return
+
+    def _sqlite_ping() -> None:
+        with sqlite3.connect(SQLITE_PATH) as conn:
+            row = conn.execute("SELECT 1").fetchone()
+            if not row or row[0] != 1:
+                raise RuntimeError("SQLite ping failed")
+
+    await asyncio.to_thread(_sqlite_ping)

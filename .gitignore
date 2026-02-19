@@ -6,15 +6,25 @@ venv/
 __pycache__/
 *.pyc
 
-# Node / frontend (later)
+# Node
 node_modules/
+
+# Frontend build artifacts
+frontend/build/
+frontend/.react-router/
+
+# Local DB / runtime data
+*.sqlite
 
 # macOS
 .DS_Store
 
 # Secrets
-*.env
+.env
+.env.
+.env.*
+backend/.env
 
-#notes
+# Notes / misc
 notes.txt
 dummy_data.rtf

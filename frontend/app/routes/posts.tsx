@@ -36,7 +36,7 @@ type ActiveUser = {
 };
 
 type Sensor = {
-  id: string;           // Mongo _id
+  id: string;           // sensor id
   name: string;
   type: string;
   location?: string;

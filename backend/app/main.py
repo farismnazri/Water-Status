@@ -8,18 +8,17 @@ import os
 import copy
 import re
 import time
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
-from bson import ObjectId
 from datetime import datetime, timedelta
 from typing import Any, Optional, List
 from fastapi.middleware.cors import CORSMiddleware
-from pymongo import MongoClient
 
 import stripe
 
-from .db import db
+from .db import ACTIVE_BACKEND, db, ping_database
 from .models import UserReportCreate
 from .sensor_ingest import (
     build_sensor_readings,
@@ -34,7 +33,7 @@ SENSOR_INGEST_INTERVAL_SECONDS = int(os.getenv("SENSOR_INGEST_INTERVAL_SECONDS",
 SENSOR_INGEST_ENABLED = os.getenv("SENSOR_INGEST_ENABLED", "1").lower() in {"1", "true", "yes"}
 _sensor_ingest_task: asyncio.Task | None = None
 
-# Fallback sample sensors (used when Mongo is unavailable)
+# Fallback sample sensors (used when persistent DB is unavailable)
 FALLBACK_SENSORS = [
     {
         "name": "KLCC 0001",
@@ -134,14 +133,14 @@ def get_fallback_sensors_with_ids():
     if "_fallback_cached" not in globals() or _fallback_cached is None:
         sensors = copy.deepcopy(FALLBACK_SENSORS)
         for s in sensors:
-            s["_id"] = ObjectId()
+            s["_id"] = str(uuid4())
         _fallback_cached = sensors
     return copy.deepcopy(_fallback_cached)
 
 _fallback_cached = None
 
 
-# --- Fallback user store when Mongo is unavailable -------------------------
+# --- Fallback user store when DB is unavailable ----------------------------
 _fallback_users: list[dict] = []
 
 def _fallback_user_dict(user: dict) -> dict:
@@ -192,6 +191,23 @@ def read_root():
 @app.get("/health")
 def health_check():
     return {"status": "ok"}
+
+
+@app.get("/healthz")
+def healthz():
+    return {"status": "ok", "backend": ACTIVE_BACKEND}
+
+
+@app.get("/readyz")
+async def readyz():
+    try:
+        await ping_database()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "not_ready", "backend": ACTIVE_BACKEND, "reason": str(exc)},
+        )
+    return {"status": "ready", "backend": ACTIVE_BACKEND}
 
 
 async def ingest_sensor_readings_once(trigger: str = "manual") -> dict:
@@ -256,6 +272,22 @@ async def _sensor_ingest_loop() -> None:
             logger.exception("Sensor ingest cycle failed")
 
         await asyncio.sleep(SENSOR_INGEST_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+async def _startup_backend_status() -> None:
+    ready = False
+    error_text = ""
+    try:
+        await ping_database()
+        ready = True
+    except Exception as exc:
+        error_text = str(exc)
+
+    logger.info("ACTIVE_BACKEND=%s", ACTIVE_BACKEND.upper())
+    logger.info("DB_READINESS_ON_STARTUP=%s", "ready" if ready else "not_ready")
+    if error_text:
+        logger.warning("DB readiness check failed on startup: %s", error_text)
 
 
 @app.on_event("startup")
@@ -523,6 +555,17 @@ def _ids_match(left: Any, right: Any) -> bool:
     return str(left) == str(right)
 
 
+def _new_id() -> str:
+    return str(uuid4())
+
+
+def _normalize_id(raw: str, field_name: str) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name} format")
+    return value
+
+
 async def _find_user_by_username(username: str) -> dict | None:
     try:
         doc = await db.users.find_one({"username": username})
@@ -704,7 +747,7 @@ class ReportUpdate(BaseModel):
 
 
 class ReportCreate(BaseModel):
-    user_id: str          # Mongo user id as string
+    user_id: str          # user id as string
     category: str         # e.g. "Water_Level", "rain", "weather"
     location: str         # e.g. "Sungai Gombak", "Kampung Baru"
     value: float          # numeric value (e.g. 4.5)
@@ -756,10 +799,7 @@ async def list_sensors():
 
 @app.get("/sensors/{sensor_id}")
 async def get_sensor(sensor_id: str):
-    try:
-        sid = ObjectId(sensor_id)
-    except Exception:
-        sid = sensor_id  # SQLite fallback string key
+    sid = _normalize_id(sensor_id, "sensor ID")
 
     doc = await db.sensors.find_one({"_id": sid})
     if not doc:
@@ -774,10 +814,7 @@ async def get_sensor(sensor_id: str):
 
 @app.patch("/sensors/{sensor_id}")
 async def update_sensor(sensor_id: str, payload: SensorUpdate):
-    try:
-        sid = ObjectId(sensor_id)
-    except Exception:
-        sid = sensor_id  # SQLite fallback
+    sid = _normalize_id(sensor_id, "sensor ID")
 
     updates: dict = {}
 
@@ -817,10 +854,7 @@ async def update_sensor(sensor_id: str, payload: SensorUpdate):
 
 @app.delete("/sensors/{sensor_id}")
 async def delete_sensor(sensor_id: str):
-    try:
-        sid = ObjectId(sensor_id)
-    except Exception:
-        sid = sensor_id  # SQLite fallback
+    sid = _normalize_id(sensor_id, "sensor ID")
 
     result = await db.sensors.delete_one({"_id": sid})
 
@@ -830,10 +864,7 @@ async def delete_sensor(sensor_id: str):
     return {"id": sensor_id, "deleted": True}
 
 def _coerce_user_id(user_id: str):
-    try:
-        return ObjectId(user_id)
-    except Exception:
-        return user_id
+    return _normalize_id(user_id, "user ID")
 
 
 @app.post("/auth/register")
@@ -855,7 +886,7 @@ async def register(payload: RegisterPayload):
         raise HTTPException(status_code=409, detail="Email already in use.")
 
     doc = {
-        "_id": ObjectId(),
+        "_id": _new_id(),
         "username": username,
         "name": username,
         "email": email,
@@ -1008,7 +1039,7 @@ async def create_user(user: UserCreate):
         stored_doc = {"_id": result.inserted_id, **user_dict}
         return _safe_user_response(stored_doc)
     except Exception:
-        doc = {"_id": ObjectId(), **user_dict}
+        doc = {"_id": _new_id(), **user_dict}
         _fallback_users.append(doc)
         return _safe_user_response(doc)
 
@@ -1144,13 +1175,10 @@ async def delete_user(user_id: str, authorization: str | None = Header(default=N
 
 @app.post("/reports")
 async def create_report(report: ReportCreate):
-    # 1. Validate & convert user_id
-    try:
-        user_oid = ObjectId(report.user_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
+    # 1. Validate & normalize user_id
+    user_id = _normalize_id(report.user_id, "user ID")
 
-    user = await db.users.find_one({"_id": user_oid})
+    user = await db.users.find_one({"_id": user_id})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
@@ -1160,8 +1188,8 @@ async def create_report(report: ReportCreate):
     # 3. Normalize category (this is the important new part)
     report_dict["category"] = normalize_category(report_dict["category"])
 
-    # 4. Use real ObjectId in DB
-    report_dict["user_id"] = user_oid
+    # 4. Use user ID string in DB
+    report_dict["user_id"] = user_id
 
     # 5. Default timestamp if missing
     if report_dict["timestamp"] is None:
@@ -1187,18 +1215,14 @@ async def list_reports(limit: int = 50):
 
 @app.get("/reports/{report_id}")
 async def get_report(report_id: str):
-    # 1. Validate ID format
-    try:
-        rid = ObjectId(report_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid report ID format")
+    rid = _normalize_id(report_id, "report ID")
 
-    # 2. Look up report in Mongo
+    # 2. Look up report
     doc = await db.reports.find_one({"_id": rid})
     if not doc:
         raise HTTPException(status_code=404, detail="Report not found")
 
-    # 3. Convert ObjectIds to strings for JSON
+    # 3. Convert IDs to strings for JSON
     doc["id"] = str(doc["_id"])
     doc["user_id"] = str(doc["user_id"])
     del doc["_id"]
@@ -1209,23 +1233,17 @@ async def get_report(report_id: str):
 
 @app.post("/user-reports")
 async def create_user_report(report: UserReportCreate):
-    # 1. Validate & convert user_id
-    try:
-        user_oid = ObjectId(report.user_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
+    # 1. Validate & normalize user_id
+    user_id = _normalize_id(report.user_id, "user ID")
 
-    user = await db.users.find_one({"_id": user_oid})
+    user = await db.users.find_one({"_id": user_id})
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # 2. Validate & convert sensor_id
-    try:
-        sensor_oid = ObjectId(report.sensor_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid sensor ID format")
+    # 2. Validate & normalize sensor_id
+    sensor_id = _normalize_id(report.sensor_id, "sensor ID")
 
-    sensor = await db.sensors.find_one({"_id": sensor_oid})
+    sensor = await db.sensors.find_one({"_id": sensor_id})
     if not sensor:
         raise HTTPException(status_code=404, detail="Sensor not found")
 
@@ -1239,8 +1257,8 @@ async def create_user_report(report: UserReportCreate):
     source_name = user.get("name") or "User"
 
     doc = {
-        "user_id": user_oid,
-        "sensor_id": sensor_oid,
+        "user_id": user_id,
+        "sensor_id": sensor_id,
         "sensor_name": sensor.get("name"),
         "location": sensor.get("location"),
         "timestamp": ts,
@@ -1250,7 +1268,7 @@ async def create_user_report(report: UserReportCreate):
         "source": source_name,
         "comment": report.comment or "",
         "likes": 0,
-        "liked_by": [],   # list of ObjectIds
+        "liked_by": [],   # list of user-id strings
     }
 
     result = await db.user_reports.insert_one(doc)
@@ -1266,13 +1284,13 @@ async def list_user_reports(
     Return user-made reports, always including a 'source' field.
     If current_user_id is provided, also include `liked_by_me` per report.
     """
-    # Try to parse the current user ID (for liked_by_me)
-    current_oid: ObjectId | None = None
+    # Normalize current user ID (for liked_by_me)
+    current_uid: str | None = None
     if current_user_id:
         try:
-            current_oid = ObjectId(current_user_id)
+            current_uid = _normalize_id(current_user_id, "current user ID")
         except Exception:
-            current_oid = None
+            current_uid = None
 
     reports = []
     try:
@@ -1281,8 +1299,8 @@ async def list_user_reports(
         async for doc in cursor:
             user_name = None
             user_id = doc.get("user_id")
-            if isinstance(user_id, ObjectId):
-                user_doc = await db.users.find_one({"_id": user_id}, {"name": 1})
+            if user_id is not None:
+                user_doc = await db.users.find_one({"_id": str(user_id)}, {"name": 1})
                 if user_doc:
                     user_name = user_doc.get("name")
 
@@ -1292,8 +1310,8 @@ async def list_user_reports(
                 liked_by = []
 
             liked_by_me = False
-            if current_oid is not None:
-                liked_by_me = any(_ids_match(x, current_oid) for x in liked_by)
+            if current_uid is not None:
+                liked_by_me = any(_ids_match(x, current_uid) for x in liked_by)
 
             doc["id"] = str(doc["_id"])
             doc["sensor_id"] = str(doc["sensor_id"])
@@ -1330,15 +1348,8 @@ async def update_user_report(report_id: str, payload: UserReportUpdate):
     matches the report's user_id.
     """
     # 1) Validate ids
-    try:
-        rid = ObjectId(report_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid report ID format")
-
-    try:
-        uid = ObjectId(payload.user_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
+    rid = _normalize_id(report_id, "report ID")
+    uid = _normalize_id(payload.user_id, "user ID")
 
     # 2) Fetch existing
     existing = await db.user_reports.find_one({"_id": rid})
@@ -1362,10 +1373,7 @@ async def update_user_report(report_id: str, payload: UserReportUpdate):
     if payload.type is not None:
         updates["type"] = normalize_category(payload.type)
     if payload.sensor_id is not None:
-        try:
-            new_sid = ObjectId(payload.sensor_id)
-        except Exception:
-            raise HTTPException(status_code=400, detail="Invalid sensor ID format")
+        new_sid = _normalize_id(payload.sensor_id, "sensor ID")
 
         sensor = await db.sensors.find_one({"_id": new_sid})
         if not sensor:
@@ -1407,19 +1415,12 @@ async def update_user_report(report_id: str, payload: UserReportUpdate):
 @app.delete("/user-reports/{report_id}")
 async def delete_user_report(report_id: str, user_id: str):
     """
-    Delete a single user report by its Mongo _id, but only if it belongs
+    Delete a single user report by its _id, but only if it belongs
     to the given user_id.
     """
     # 1) Validate ids
-    try:
-        rid = ObjectId(report_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid report ID format")
-
-    try:
-        uid = ObjectId(user_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
+    rid = _normalize_id(report_id, "report ID")
+    uid = _normalize_id(user_id, "user ID")
 
     # 2) Fetch report to check ownership
     doc = await db.user_reports.find_one({"_id": rid})
@@ -1450,15 +1451,8 @@ async def toggle_like_user_report(report_id: str, payload: LikePayload):
     Toggle a like from a given user on a report.
     Returns { id, likes, liked }.
     """
-    try:
-        rid = ObjectId(report_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid report ID format")
-
-    try:
-        uid = ObjectId(payload.user_id)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid user ID format")
+    rid = _normalize_id(report_id, "report ID")
+    uid = _normalize_id(payload.user_id, "user ID")
 
     doc = await db.user_reports.find_one({"_id": rid})
     if not doc:
@@ -1494,21 +1488,14 @@ async def get_sensor_readings(sensor_id: str, hours: int = 24):
     if hours <= 0:
         raise HTTPException(status_code=400, detail="hours must be positive")
 
-    sid: ObjectId | None = None
+    sid = _normalize_id(sensor_id, "sensor ID")
     sensor = None
     use_fallback = False
 
     try:
-        sid = ObjectId(sensor_id)
         sensor = await db.sensors.find_one({"_id": sid})
     except Exception:
-        sid = None
-
-    if sensor is None:
-        # try string id (SQLite)
-        sensor = await db.sensors.find_one({"_id": sensor_id})
-        if sensor:
-            sid = sensor_id
+        sensor = None
 
     if sensor is None:
         # try fallback cache
@@ -1520,7 +1507,7 @@ async def get_sensor_readings(sensor_id: str, hours: int = 24):
                 use_fallback = True
                 break
 
-    if sensor is None or sid is None:
+    if sensor is None:
         raise HTTPException(status_code=404, detail="Sensor not found")
 
     since = datetime.utcnow() - timedelta(hours=hours)
@@ -1593,7 +1580,7 @@ async def get_sensor_readings(sensor_id: str, hours: int = 24):
         reading = build_sensor_readings([sensor])[0]
         readings = [
             {
-                "id": str(ObjectId()),
+                "id": _new_id(),
                 "sensor_id": str(sid),
                 "timestamp": reading["timestamp"],
                 "value": reading["value"],
@@ -1616,22 +1603,13 @@ async def get_sensor_readings(sensor_id: str, hours: int = 24):
 
 @app.get("/sensors/{sensor_id}/latest-reading")
 async def get_latest_sensor_reading(sensor_id: str):
-    try:
-        sid = ObjectId(sensor_id)
-    except Exception:
-        sid = None
+    sid = _normalize_id(sensor_id, "sensor ID")
 
     sensor = None
-    if sid is not None:
-        try:
-            sensor = await db.sensors.find_one({"_id": sid})
-        except Exception:
-            sensor = None
-
-    if sensor is None:
-        sensor = await db.sensors.find_one({"_id": sensor_id})
-        if sensor:
-            sid = sensor_id
+    try:
+        sensor = await db.sensors.find_one({"_id": sid})
+    except Exception:
+        sensor = None
 
     if sensor is None:
         fallback = get_fallback_sensors_with_ids()
@@ -1641,7 +1619,7 @@ async def get_latest_sensor_reading(sensor_id: str):
                 sid = s["_id"]
                 break
 
-    if sensor is None or sid is None:
+    if sensor is None:
         raise HTTPException(status_code=404, detail="Sensor not found")
 
     doc = None
@@ -1656,7 +1634,7 @@ async def get_latest_sensor_reading(sensor_id: str):
     if doc is None:
         reading = build_sensor_readings([sensor])[0]
         doc = {
-            "id": str(ObjectId()),
+            "id": _new_id(),
             "sensor_id": str(sid),
             "timestamp": reading["timestamp"],
             "value": reading["value"],
@@ -1746,7 +1724,7 @@ async def get_latest_readings_for_all_sensors():
 async def get_all_sensor_readings(limit: int = 500):
     """
     GET ALL SENSOR READINGS (all types, all locations), newest first.
-    Uses the existing async Mongo DB from .db and returns a simple list.
+    Uses the existing async DB layer from .db and returns a simple list.
     """
     if limit <= 0:
         raise HTTPException(status_code=400, detail="limit must be positive")
@@ -1767,7 +1745,7 @@ async def get_all_sensor_readings(limit: int = 500):
         for r in generated:
             readings.append(
                 {
-                    "id": str(ObjectId()),
+                    "id": _new_id(),
                     "sensor_id": str(r["sensor_id"]),
                     "value": r["value"],
                     "unit": r.get("unit"),
