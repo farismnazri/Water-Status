@@ -1,0 +1,17 @@
+[Unit]
+Description=Water-Status API (uvicorn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=faiz
+WorkingDirectory=/home/faiz/Water-Status/backend
+Environment=DATABASE_URL=postgresql://waterstatus:waterstatusiscool@127.0.0.1:5432/waterstatus
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/faiz/Water-Status/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
