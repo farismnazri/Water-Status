@@ -437,6 +437,24 @@ async def _ensure_sensor(
 ) -> Any:
     existing = await db.sensors.find_one({"external_id": external_id, "type": sensor_type})
     if existing:
+        updates: dict[str, Any] = {}
+        existing_lat = _safe_float(existing.get("latitude"))
+        if existing_lat is None:
+            existing_lat = _safe_float(existing.get("lat"))
+        existing_lon = _safe_float(existing.get("longitude"))
+        if existing_lon is None:
+            existing_lon = _safe_float(existing.get("lon"))
+        if existing_lon is None:
+            existing_lon = _safe_float(existing.get("lng"))
+
+        if latitude is not None and existing_lat is None:
+            updates["latitude"] = latitude
+            updates["lat"] = latitude
+        if longitude is not None and existing_lon is None:
+            updates["longitude"] = longitude
+            updates["lon"] = longitude
+        if updates:
+            await db.sensors.update_one({"_id": existing["_id"]}, {"$set": updates})
         return existing["_id"]
 
     doc = {
@@ -492,7 +510,14 @@ async def fetch_selangor_readings(db: Any) -> list[dict[str, Any]]:
         if value is None:
             continue
 
-        # Lat/lon would require per-station detail calls; skip for speed
+        latitude = _safe_float(station.get("latitude"))
+        longitude = _safe_float(station.get("longitude"))
+        if latitude is None or longitude is None:
+            latitude, longitude = await _fetch_station_details(
+                RF_STATION_DETAILS_URL,
+                int(station_numeric_id),
+            )
+
         sensor_id = await _ensure_sensor(
             db,
             external_id=ext_id,
@@ -500,8 +525,8 @@ async def fetch_selangor_readings(db: Any) -> list[dict[str, Any]]:
             location=location,
             sensor_type="rain",
             unit="mm/h",
-            latitude=None,
-            longitude=None,
+            latitude=latitude,
+            longitude=longitude,
         )
 
         readings.append(
@@ -560,6 +585,14 @@ async def fetch_selangor_readings(db: Any) -> list[dict[str, Any]]:
         if value is None:
             continue
 
+        latitude = _safe_float(station.get("latitude"))
+        longitude = _safe_float(station.get("longitude"))
+        if latitude is None or longitude is None:
+            latitude, longitude = await _fetch_station_details(
+                WL_STATION_DETAILS_URL,
+                int(station_numeric_id),
+            )
+
         sensor_id = await _ensure_sensor(
             db,
             external_id=ext_id,
@@ -567,8 +600,8 @@ async def fetch_selangor_readings(db: Any) -> list[dict[str, Any]]:
             location=location,
             sensor_type="water_level",
             unit="m",
-            latitude=None,
-            longitude=None,
+            latitude=latitude,
+            longitude=longitude,
         )
 
         readings.append(

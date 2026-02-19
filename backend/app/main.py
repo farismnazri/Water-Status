@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import copy
 import re
@@ -12,7 +13,7 @@ from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, List
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -566,6 +567,197 @@ def _normalize_id(raw: str, field_name: str) -> str:
     return value
 
 
+SENSOR_LAT_KEYS = ("latitude", "lat")
+SENSOR_LON_KEYS = ("longitude", "lon", "lng")
+READING_SENSOR_ID_KEYS = ("sensor_id", "sensorId", "sensor", "station_id", "stationId")
+READING_TS_KEYS = ("timestamp", "recorded_at", "created_at", "ts")
+
+
+def _to_float(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            number = float(text)
+        except ValueError:
+            return None
+    else:
+        return None
+
+    if not math.isfinite(number):
+        return None
+    return number
+
+
+def _extract_sensor_coords(doc: dict[str, Any]) -> tuple[float | None, float | None]:
+    lat: float | None = None
+    lon: float | None = None
+
+    for key in SENSOR_LAT_KEYS:
+        lat = _to_float(doc.get(key))
+        if lat is not None:
+            break
+
+    for key in SENSOR_LON_KEYS:
+        lon = _to_float(doc.get(key))
+        if lon is not None:
+            break
+
+    if lat is None or lon is None:
+        coords = doc.get("coordinates")
+        if isinstance(coords, dict):
+            if lat is None:
+                for key in SENSOR_LAT_KEYS:
+                    lat = _to_float(coords.get(key))
+                    if lat is not None:
+                        break
+            if lon is None:
+                for key in SENSOR_LON_KEYS:
+                    lon = _to_float(coords.get(key))
+                    if lon is not None:
+                        break
+        elif isinstance(coords, (list, tuple)) and len(coords) >= 2:
+            first = _to_float(coords[0])
+            second = _to_float(coords[1])
+            if first is not None and second is not None:
+                # Accept either [lat, lon] or GeoJSON-style [lon, lat].
+                if lat is None and lon is None:
+                    if abs(first) <= 90 and abs(second) <= 180:
+                        lat, lon = first, second
+                    elif abs(first) <= 180 and abs(second) <= 90:
+                        lat, lon = second, first
+
+    if lat is None or lon is None:
+        geometry = doc.get("geometry")
+        if isinstance(geometry, dict):
+            gcoords = geometry.get("coordinates")
+            if isinstance(gcoords, (list, tuple)) and len(gcoords) >= 2:
+                glon = _to_float(gcoords[0])
+                glat = _to_float(gcoords[1])
+                if lat is None:
+                    lat = glat
+                if lon is None:
+                    lon = glon
+
+    return lat, lon
+
+
+def _normalize_sensor_for_client(doc: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(doc)
+    sensor_id = str(normalized.get("_id") or normalized.get("id") or "")
+    if sensor_id:
+        normalized["id"] = sensor_id
+    normalized.pop("_id", None)
+
+    lat, lon = _extract_sensor_coords(normalized)
+    normalized["latitude"] = lat
+    normalized["longitude"] = lon
+    # keep short aliases too for compatibility with older frontend code
+    normalized["lat"] = lat
+    normalized["lon"] = lon
+    return normalized
+
+
+def _extract_sensor_id_from_reading(doc: dict[str, Any]) -> str | None:
+    for key in READING_SENSOR_ID_KEYS:
+        value = doc.get(key)
+        if value is None:
+            continue
+        if isinstance(value, dict):
+            nested = value.get("_id") or value.get("id") or value.get("sensor_id")
+            if nested is not None:
+                return str(nested)
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return None
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+        # Milliseconds epoch support.
+        if abs(numeric) > 1e12:
+            numeric = numeric / 1000.0
+        try:
+            return datetime.fromtimestamp(numeric, tz=timezone.utc)
+        except Exception:
+            return None
+    if not isinstance(value, str):
+        return None
+
+    text = value.strip()
+    if not text:
+        return None
+
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        pass
+
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+
+    return None
+
+
+def _extract_reading_timestamp(doc: dict[str, Any]) -> tuple[Any, float | None]:
+    for key in READING_TS_KEYS:
+        raw = doc.get(key)
+        if raw is None:
+            continue
+        parsed = _parse_datetime(raw)
+        if parsed is None:
+            continue
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        else:
+            parsed = parsed.astimezone(timezone.utc)
+        return raw, parsed.timestamp()
+    return None, None
+
+
+def _reading_sort_key(doc: dict[str, Any]) -> tuple[int, float, str]:
+    _, ts = _extract_reading_timestamp(doc)
+    if ts is None:
+        return (0, float("-inf"), str(doc.get("_id") or ""))
+    return (1, ts, str(doc.get("_id") or ""))
+
+
+def _serialize_timestamp(raw: Any) -> Any:
+    parsed = _parse_datetime(raw)
+    if parsed is None:
+        return raw
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    else:
+        parsed = parsed.astimezone(timezone.utc)
+    return parsed.isoformat()
+
+
+def _select_latest_reading_doc_for_sensor(readings: list[dict[str, Any]], sensor_id: str) -> dict[str, Any] | None:
+    candidates = [doc for doc in readings if _extract_sensor_id_from_reading(doc) == str(sensor_id)]
+    if not candidates:
+        return None
+    return max(candidates, key=_reading_sort_key)
+
+
 async def _find_user_by_username(username: str) -> dict | None:
     try:
         doc = await db.users.find_one({"username": username})
@@ -772,28 +964,16 @@ async def list_sensors():
     try:
         cursor = db.sensors.find()
         async for doc in cursor:
-            doc["id"] = str(doc["_id"])
-            del doc["_id"]
-            sensors.append(doc)
+            sensors.append(_normalize_sensor_for_client(doc))
     except Exception:
         fallback = get_fallback_sensors_with_ids()
         for s in fallback:
-            sensors.append(
-                {
-                    **{k: v for k, v in s.items() if k != "_id"},
-                    "id": str(s["_id"]),
-                }
-            )
+            sensors.append(_normalize_sensor_for_client(s))
     else:
         if not sensors:
             fallback = get_fallback_sensors_with_ids()
             for s in fallback:
-                sensors.append(
-                    {
-                        **{k: v for k, v in s.items() if k != "_id"},
-                        "id": str(s["_id"]),
-                    }
-                )
+                sensors.append(_normalize_sensor_for_client(s))
 
     return {"sensors": sensors}
 
@@ -805,12 +985,7 @@ async def get_sensor(sensor_id: str):
     if not doc:
         raise HTTPException(status_code=404, detail="Sensor not found")
 
-    if "_id" in doc:
-        doc["id"] = str(doc["_id"])
-        doc.pop("_id", None)
-    else:
-        doc["id"] = str(sid)
-    return doc
+    return _normalize_sensor_for_client(doc)
 
 @app.patch("/sensors/{sensor_id}")
 async def update_sensor(sensor_id: str, payload: SensorUpdate):
@@ -848,9 +1023,7 @@ async def update_sensor(sensor_id: str, payload: SensorUpdate):
         raise HTTPException(status_code=404, detail="Sensor not found")
 
     doc = await db.sensors.find_one({"_id": sid})
-    doc["id"] = str(doc["_id"])
-    del doc["_id"]
-    return doc
+    return _normalize_sensor_for_client(doc)
 
 @app.delete("/sensors/{sensor_id}")
 async def delete_sensor(sensor_id: str):
@@ -1511,25 +1684,29 @@ async def get_sensor_readings(sensor_id: str, hours: int = 24):
         raise HTTPException(status_code=404, detail="Sensor not found")
 
     since = datetime.utcnow() - timedelta(hours=hours)
+    since_epoch = since.replace(tzinfo=timezone.utc).timestamp()
     async def _load_readings() -> list[dict]:
         loaded: list[dict] = []
         try:
-            cursor = (
-                db.sensor_readings.find(
-                    {
-                        "sensor_id": sid,
-                        "timestamp": {"$gte": since},
-                    }
-                )
-                .sort("timestamp", 1)
-            )
-            async for doc in cursor:
-                doc["id"] = str(doc["_id"])
-                doc["sensor_id"] = str(doc["sensor_id"])
-                del doc["_id"]
-                loaded.append(doc)
+            docs = await db.sensor_readings.find().to_list(length=None)
+            for doc in docs:
+                reading_sensor_id = _extract_sensor_id_from_reading(doc)
+                if reading_sensor_id != str(sid):
+                    continue
+
+                raw_ts, ts_epoch = _extract_reading_timestamp(doc)
+                if ts_epoch is not None and ts_epoch < since_epoch:
+                    continue
+
+                serialized = dict(doc)
+                serialized["id"] = str(serialized.get("_id", _new_id()))
+                serialized["sensor_id"] = str(reading_sensor_id)
+                serialized["timestamp"] = _serialize_timestamp(raw_ts)
+                serialized.pop("_id", None)
+                loaded.append(serialized)
         except Exception:
             return []
+        loaded.sort(key=lambda item: (_extract_reading_timestamp(item)[1] or float("-inf")))
         return loaded
 
     readings: list[dict] = []
@@ -1624,10 +1801,8 @@ async def get_latest_sensor_reading(sensor_id: str):
 
     doc = None
     try:
-        doc = await db.sensor_readings.find_one(
-            {"sensor_id": sid},
-            sort=[("timestamp", -1)],
-        )
+        all_readings = await db.sensor_readings.find().to_list(length=None)
+        doc = _select_latest_reading_doc_for_sensor(all_readings, sid)
     except Exception:
         doc = None
 
@@ -1644,9 +1819,17 @@ async def get_latest_sensor_reading(sensor_id: str):
             "source": reading.get("source", "simulated"),
         }
     else:
-        doc["id"] = str(doc["_id"])
-        doc["sensor_id"] = str(doc["sensor_id"])
-        del doc["_id"]
+        raw_ts, _ = _extract_reading_timestamp(doc)
+        doc = {
+            "id": str(doc.get("_id", _new_id())),
+            "sensor_id": str(_extract_sensor_id_from_reading(doc) or sid),
+            "timestamp": _serialize_timestamp(raw_ts),
+            "value": doc.get("value"),
+            "unit": doc.get("unit") or sensor.get("unit"),
+            "type": doc.get("type") or sensor.get("type"),
+            "location": doc.get("location") or sensor.get("location"),
+            "source": doc.get("source", "unknown"),
+        }
 
     return {
         "sensor_id": str(sid),
@@ -1670,19 +1853,28 @@ async def get_latest_readings_for_all_sensors():
     except Exception:
         sensors = get_fallback_sensors_with_ids()
 
-    try_db = True
-    for sensor in sensors:
-        doc = None
-        if try_db:
-            try:
-                doc = await db.sensor_readings.find_one(
-                    {"sensor_id": sensor["_id"]},
-                    sort=[("timestamp", -1)],
-                )
-            except Exception:
-                try_db = False
-                doc = None
+    latest_by_sensor: dict[str, dict[str, Any]] = {}
+    try:
+        all_readings = await db.sensor_readings.find().to_list(length=None)
+        known_sensor_ids = {str(s.get("_id")) for s in sensors if s.get("_id") is not None}
+        for reading in all_readings:
+            sensor_id = _extract_sensor_id_from_reading(reading)
+            if sensor_id is None or sensor_id not in known_sensor_ids:
+                continue
 
+            previous = latest_by_sensor.get(sensor_id)
+            if previous is None:
+                latest_by_sensor[sensor_id] = reading
+                continue
+
+            if _reading_sort_key(reading) > _reading_sort_key(previous):
+                latest_by_sensor[sensor_id] = reading
+    except Exception:
+        latest_by_sensor = {}
+
+    for sensor in sensors:
+        sensor_id = str(sensor.get("_id"))
+        doc = latest_by_sensor.get(sensor_id)
         if doc is None:
             # Generate fallback data once for all sensors, not per-sensor
             if generated_fallback_by_sensor_id is None:
@@ -1704,14 +1896,22 @@ async def get_latest_readings_for_all_sensors():
                     "timestamp": fallback_reading.get("timestamp"),
                     "source": fallback_reading.get("source", "simulated"),
                 }
+        else:
+            raw_ts, _ = _extract_reading_timestamp(doc)
+            doc = {
+                "value": doc.get("value"),
+                "timestamp": _serialize_timestamp(raw_ts),
+                "source": doc.get("source", "unknown"),
+                "unit": doc.get("unit") or sensor.get("unit"),
+            }
 
         latest_readings.append(
             {
-                "sensor_id": str(sensor["_id"]),
+                "sensor_id": sensor_id,
                 "sensor_name": sensor.get("name"),
                 "location": sensor.get("location"),
                 "type": sensor.get("type"),
-                "unit": sensor.get("unit"),
+                "unit": doc.get("unit") or sensor.get("unit"),
                 "value": doc.get("value"),
                 "timestamp": doc.get("timestamp"),
                 "source": doc.get("source", "unknown"),
@@ -1732,13 +1932,23 @@ async def get_all_sensor_readings(limit: int = 500):
 
     readings = []
     try:
-        cursor = db.sensor_readings.find().sort("timestamp", -1).limit(limit)
-        async for doc in cursor:
-            doc["id"] = str(doc["_id"])
-            if "sensor_id" in doc:
-                doc["sensor_id"] = str(doc["sensor_id"])
-            del doc["_id"]
-            readings.append(doc)
+        docs = await db.sensor_readings.find().to_list(length=None)
+        docs.sort(key=_reading_sort_key, reverse=True)
+        for doc in docs[:limit]:
+            sensor_id = _extract_sensor_id_from_reading(doc)
+            raw_ts, _ = _extract_reading_timestamp(doc)
+            readings.append(
+                {
+                    "id": str(doc.get("_id", _new_id())),
+                    "sensor_id": str(sensor_id) if sensor_id is not None else None,
+                    "value": doc.get("value"),
+                    "unit": doc.get("unit"),
+                    "timestamp": _serialize_timestamp(raw_ts),
+                    "type": doc.get("type"),
+                    "location": doc.get("location"),
+                    "source": doc.get("source", "unknown"),
+                }
+            )
     except Exception:
         sensors = get_fallback_sensors_with_ids()
         generated = build_sensor_readings(sensors)

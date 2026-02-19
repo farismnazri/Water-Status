@@ -6,6 +6,7 @@ Falls back to SQLite when DATABASE_URL is missing.
 
 import asyncio
 import json
+import math
 import os
 import re
 import sqlite3
@@ -59,6 +60,27 @@ def _load_asyncpg():
 
 
 class _CollectionHelpers:
+    @staticmethod
+    def _to_float(value: Any) -> float | None:
+        if value is None or isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            number = float(value)
+        elif isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            try:
+                number = float(text)
+            except ValueError:
+                return None
+        else:
+            return None
+
+        if not math.isfinite(number):
+            return None
+        return number
+
     @staticmethod
     def _match(doc: dict[str, Any], query: dict[str, Any]) -> bool:
         for k, v in (query or {}).items():
@@ -377,6 +399,12 @@ async def _get_pg_pool() -> "asyncpg.Pool":
                         "doc JSONB NOT NULL"
                         ")"
                     )
+                await conn.execute(
+                    'ALTER TABLE "sensors" ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION'
+                )
+                await conn.execute(
+                    'ALTER TABLE "sensors" ADD COLUMN IF NOT EXISTS lon DOUBLE PRECISION'
+                )
             _pg_tables_ready = True
 
     return _pg_pool
@@ -404,13 +432,31 @@ class PostgresCollection(_CollectionHelpers):
     async def _upsert_doc(self, doc: dict[str, Any]) -> None:
         pool = await _get_pg_pool()
         encoded = self._encode_doc(doc)
+        lat = self._to_float(encoded.get("latitude"))
+        if lat is None:
+            lat = self._to_float(encoded.get("lat"))
+        lon = self._to_float(encoded.get("longitude"))
+        if lon is None:
+            lon = self._to_float(encoded.get("lon"))
+        if lon is None:
+            lon = self._to_float(encoded.get("lng"))
         async with pool.acquire() as conn:
-            await conn.execute(
-                f"INSERT INTO {self.table_ident} (_id, doc) VALUES ($1, $2::jsonb) "
-                "ON CONFLICT (_id) DO UPDATE SET doc = EXCLUDED.doc",
-                str(encoded["_id"]),
-                json.dumps(encoded),
-            )
+            if self.name == "sensors":
+                await conn.execute(
+                    f"INSERT INTO {self.table_ident} (_id, doc, lat, lon) VALUES ($1, $2::jsonb, $3, $4) "
+                    "ON CONFLICT (_id) DO UPDATE SET doc = EXCLUDED.doc, lat = EXCLUDED.lat, lon = EXCLUDED.lon",
+                    str(encoded["_id"]),
+                    json.dumps(encoded),
+                    lat,
+                    lon,
+                )
+            else:
+                await conn.execute(
+                    f"INSERT INTO {self.table_ident} (_id, doc) VALUES ($1, $2::jsonb) "
+                    "ON CONFLICT (_id) DO UPDATE SET doc = EXCLUDED.doc",
+                    str(encoded["_id"]),
+                    json.dumps(encoded),
+                )
 
     async def find_one(
         self,
