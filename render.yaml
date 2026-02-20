@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: water-status
+    env: static
+    buildCommand: cd frontend && npm ci && npm run build
+    staticPublishPath: frontend/build/client
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
