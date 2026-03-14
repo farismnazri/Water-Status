@@ -54,6 +54,10 @@ Set frontend environment variable:
 
 - `VITE_API_BASE_URL=https://<your-backend-service>.onrender.com`
 
+Legacy alias:
+
+- `VITE_API_BASE=https://<your-backend-service>.onrender.com`
+
 If missing, the app falls back to same-origin in production and `http://127.0.0.1:8000` on localhost.
 
 ### Docker Deployment

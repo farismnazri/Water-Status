@@ -184,74 +184,75 @@ const storageHandler = (e: StorageEvent) => {
         <Meta />
         <Links />
       </head>
-      <body className="min-h-screen bg-gradient-to-b from-[#6FA8DC] via-[#C7DEF3] to-[#FFFFFF] text-[var(--ws-text-main)]">
-      {/* <body className="min-h-screen bg-gradient-to-b from-[#FFFBE3] via-[#FFF0B8] to-[#FFE08A] text-[var(--ws-text-main)]"> */}
-        {/* Top nav */}
-                <header className="border-b border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)]/95 backdrop-blur">
-          <div className="max-w-6xl mx-auto flex items-center justify-between px-4 py-3">
-            {/* Left: logo */}
-            <Link to="/" className="flex items-center gap-2">
-              <span className="ws-logo-circle inline-flex h-7 w-7 items-center justify-center text-sm font-bold">
-                W
-              </span>
-              <span className="text-sm font-semibold tracking-tight">
-                Water Status
-              </span>
-            </Link>
-
-            {/* Right: nav + cart + active user */}
-            <div className="flex items-center gap-4">
-              <nav className="flex gap-1 text-xs sm:text-sm">
-                {navItems.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    className={({ isActive }) =>
-                      [
-                        "px-3 py-1.5 rounded-full transition",
-                        "text-[var(--ws-text-muted)] hover:text-[var(--ws-text-main)] hover:bg-[var(--ws-accent-alt)]/70",
-                        isActive
-                          ? "bg-[var(--ws-accent)] text-slate-950 border border-[var(--ws-accent-soft)] shadow-sm"
-                          : "",
-                      ].join(" ")
-                    }
-                    end={item.to === "/"}
-                  >
-                    {item.label}
-                  </NavLink>
-                ))}
-              </nav>
-
-              {/* Cart icon */}
-<Link
-  to="/cart"
-  aria-label="View cart"
-  className="relative inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] hover:bg-[var(--ws-accent-alt)]/70 transition"
->
-  <ShoppingCart className="h-4 w-4 text-slate-700" />
-  {cartCount > 0 && (
-    <span className="absolute -top-1 -right-1 min-w-[1.1rem] px-1 rounded-full bg-emerald-500 text-[10px] font-semibold text-white text-center">
-      {cartCount}
-    </span>
-  )}
-</Link>
-
-              {/* Active user pill */}
-              <div className="flex flex-col items-end text-[11px] leading-tight">
-                <span className="font-semibold text-slate-800">
-                  {activeUser.name || "Guest"}
+      <body className="min-h-screen text-[var(--ws-text-main)]">
+        <div className="relative">
+          {/* Top nav */}
+          <header className="border-b border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)]/95 backdrop-blur">
+            <div className="max-w-6xl mx-auto flex items-center justify-between px-4 py-3">
+              {/* Left: logo */}
+              <Link to="/" className="flex items-center gap-2">
+                <span className="ws-logo-circle inline-flex h-7 w-7 items-center justify-center text-sm font-bold">
+                  W
                 </span>
-                <span className="uppercase tracking-wide text-[10px] text-slate-500">
-                  {activeUser.plan ? `${activeUser.plan} plan` : "Guest"}
+                <span className="text-sm font-semibold tracking-tight">
+                  Water Status
                 </span>
+              </Link>
+
+              {/* Right: nav + cart + active user */}
+              <div className="flex items-center gap-4">
+                <nav className="flex gap-1 text-xs sm:text-sm">
+                  {navItems.map((item) => (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      className={({ isActive }) =>
+                        [
+                          "px-3 py-1.5 rounded-full transition",
+                          "text-[var(--ws-text-muted)] hover:text-[var(--ws-text-main)] hover:bg-[var(--ws-accent-alt)]/70",
+                          isActive
+                            ? "bg-[var(--ws-accent)] text-slate-950 border border-[var(--ws-accent-soft)] shadow-sm"
+                            : "",
+                        ].join(" ")
+                      }
+                      end={item.to === "/"}
+                    >
+                      {item.label}
+                    </NavLink>
+                  ))}
+                </nav>
+
+                {/* Cart icon */}
+                <Link
+                  to="/cart"
+                  aria-label="View cart"
+                  className="relative inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] hover:bg-[var(--ws-accent-alt)]/70 transition"
+                >
+                  <ShoppingCart className="h-4 w-4 text-slate-700" />
+                  {cartCount > 0 && (
+                    <span className="absolute -top-1 -right-1 min-w-[1.1rem] px-1 rounded-full bg-emerald-500 text-[10px] font-semibold text-white text-center">
+                      {cartCount}
+                    </span>
+                  )}
+                </Link>
+
+                {/* Active user pill */}
+                <div className="flex flex-col items-end text-[11px] leading-tight">
+                  <span className="font-semibold text-slate-800">
+                    {activeUser.name || "Guest"}
+                  </span>
+                  <span className="uppercase tracking-wide text-[10px] text-slate-500">
+                    {activeUser.plan ? `${activeUser.plan} plan` : "Guest"}
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
-        </header>
+          </header>
 
-        {/* Page content */}
-        <div className="pt-1">
-          {children}
+          {/* Page content */}
+          <div className="pt-1">
+            {children}
+          </div>
         </div>
 
         <ScrollRestoration />

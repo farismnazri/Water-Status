@@ -1,4 +1,5 @@
 // app/routes/products.tsx
+import { Link } from "react-router";
 import { useState, useEffect } from "react";
 import type { Route } from "./+types/products";
 
@@ -137,7 +138,8 @@ function handleAddToCart(item: CartItem) {
             Choose your Water Status setup.
           </h1>
           <p className="mt-1 text-sm:text-3xl text-slate-600 max-w-xl leading-relaxed">
-            Combine IoT sensor hardware with thte right subscription plan to monitor water levels and alerts in real time.
+            Combine IoT sensor hardware with the future support tools we&apos;re
+            building to monitor water levels and alerts in real time.
           </p>
         </div>
 
@@ -281,14 +283,26 @@ function SubscriptionsTab() {
   return (
     <div className="ws-card p-6 space-y-4">
       <h2 className="text-sm font-semibold">Subscription plans</h2>
-      <p className="text-xs text-slate-600 max-w-xl">
-        Pick a plan to unlock dashboards, alerts, and data history for your
-        devices.
-      </p>
+
+      <div className="rounded-xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] p-4 sm:p-5 space-y-3">
+        <p className="text-sm font-semibold text-slate-800">
+          This could all be yours if we build it together.
+        </p>
+        <p className="text-xs text-slate-700 max-w-3xl leading-relaxed">
+          These features are part of the future we imagine for Water Status.
+          Support the mission and help us bring them to life.
+        </p>
+        <Link to="/about" className="inline-flex ws-button-primary text-xs">
+          Help us build this
+        </Link>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-3 items-start">
         {/* Free */}
         <div className="rounded-xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] p-4 text-xs flex flex-col gap-2">
+          <span className="inline-flex w-fit rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-600">
+            Future dream
+          </span>
           <p className="text-sm font-semibold">Free</p>
           <ul className="text-[11px] text-slate-600 list-disc pl-4 space-y-0.5">
             <li>1 device</li>
@@ -296,13 +310,16 @@ function SubscriptionsTab() {
             <li>Limited history</li>
           </ul>
           <p className="text-sm font-semibold mt-1">RM 0 / month</p>
-          <button className="mt-2 ws-button-primary text-xs">
-            Get started
-          </button>
+          <p className="mt-2 text-[11px] font-medium text-slate-500">
+            Planned to keep essential access open to more communities.
+          </p>
         </div>
 
         {/* Plus */}
         <div className="rounded-xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] p-4 text-xs flex flex-col gap-2">
+          <span className="inline-flex w-fit rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-sky-700">
+            Build-it-together
+          </span>
           <p className="text-sm font-semibold">Plus</p>
           <ul className="text-[11px] text-slate-600 list-disc pl-4 space-y-0.5">
             <li>Up to 5 devices</li>
@@ -310,13 +327,16 @@ function SubscriptionsTab() {
             <li>6-month history</li>
           </ul>
           <p className="text-sm font-semibold mt-1">RM 9.99 / month</p>
-          <button className="mt-2 ws-button-primary text-xs">
-            Choose Plus
-          </button>
+          <p className="mt-2 text-[11px] font-medium text-slate-500">
+            A shared-alert toolkit we can build with local support.
+          </p>
         </div>
 
         {/* Ultra with glow */}
         <div className="rounded-xl border border-emerald-400 bg-emerald-600/95 p-4 text-xs flex flex-col gap-2 text-emerald-50 shadow-lg shadow-emerald-500/60 ring-2 ring-emerald-300/70">
+          <span className="inline-flex w-fit rounded-full border border-emerald-200/70 bg-white/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-50">
+            Next chapter
+          </span>
           <p className="text-sm font-semibold">Ultra</p>
           <img
             src="/images/satellite-iot-energy-agriculture.jpg"
@@ -329,11 +349,9 @@ function SubscriptionsTab() {
             <li>Full history export</li>
           </ul>
           <p className="text-sm font-semibold mt-1">RM 19.99 / month</p>
-          <button
-            className="mt-2 rounded-full border border-emerald-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50 hover:border-emerald-300 transition"
-          >
-            Talk to us for a more tailored plan
-          </button>
+          <p className="mt-2 text-[11px] font-medium text-emerald-100">
+            A partner-ready next chapter for wider flood resilience work.
+          </p>
         </div>
       </div>
     </div>

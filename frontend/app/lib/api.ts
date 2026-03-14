@@ -3,7 +3,13 @@ function stripTrailingSlash(url: string): string {
 }
 
 function detectApiBase(): string {
-  const envBase = (import.meta as any)?.env?.VITE_API_BASE_URL as string | undefined;
+  const env = (import.meta as any)?.env as
+    | {
+        VITE_API_BASE_URL?: string;
+        VITE_API_BASE?: string;
+      }
+    | undefined;
+  const envBase = env?.VITE_API_BASE_URL || env?.VITE_API_BASE;
   if (envBase && envBase.trim()) {
     return stripTrailingSlash(envBase.trim());
   }

@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router";
 import type { Route } from "./+types/cart";
-import { API_BASE } from "../lib/api";
 
 type CartItem = {
   id: string;
@@ -23,11 +22,6 @@ const PRODUCT_IMAGE_BY_ID: Record<string, string> = {
   "neighbour-bundle": "/images/bundle.png",
   "community-pack": "/images/superbundle.png",
 };
-
-function parsePriceToNumber(priceStr: string): number {
-  const match = priceStr.match(/([\d.]+)/);
-  return match ? parseFloat(match[1]) : 0;
-}
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -126,43 +120,6 @@ export default function CartPage() {
     return PRODUCT_IMAGE_BY_ID[item.id] || null;
   }
 
-    async function handleCheckout() {
-    if (!items.length) return;
-
-    try {
-      const payload = {
-        items: items.map((it) => ({
-          name: it.name,
-          price: parsePriceToNumber(it.price),
-          quantity: it.quantity ?? 1,
-        })),
-      };
-
-      const res = await fetch(`${API_BASE}/create-checkout-session`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-
-      if (!res.ok) {
-        console.error("Checkout failed", res.status);
-        alert("Could not start checkout.");
-        return;
-      }
-
-      const data = await res.json();
-      if (data.url) {
-        // 🔁 Redirect user to Stripe Checkout
-        window.location.href = data.url;
-      } else {
-        alert("Checkout session did not return a URL.");
-      }
-    } catch (err) {
-      console.error(err);
-      alert("Something went wrong starting checkout.");
-    }
-  }
-
   const totalItems = items.reduce(
     (sum, it) => sum + (it.quantity ?? 1),
     0
@@ -255,23 +212,27 @@ export default function CartPage() {
                 ))}
               </ul>
 
-<div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 text-xs pt-2 border-t border-[var(--ws-border-subtle)]">
-  <span className="text-slate-600">
-    {totalItems} item{totalItems === 1 ? "" : "s"}
-  </span>
-  <div className="flex items-center gap-3">
-    <span className="text-[20px] font-semibold text-slate-800">
-      Approx total: RM {totalPrice.toFixed(2)}
-    </span>
-    <button
-      type="button"
-      onClick={handleCheckout}
-      className="text-[15px] px-3 py-1.5 rounded-full bg-sky-600 text-white text-[11px] font-medium hover:bg-sky-700 transition"
-    >
-      Checkout (test)
-    </button>
-  </div>
-</div>
+              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 text-xs pt-2 border-t border-[var(--ws-border-subtle)]">
+                <div className="space-y-2">
+                  <span className="block text-slate-600">
+                    {totalItems} item{totalItems === 1 ? "" : "s"}
+                  </span>
+                  <p className="max-w-xl text-slate-600 leading-relaxed">
+                    Your cart is a preview for now. The full support flow is
+                    still on the way, but this is the future we&apos;re building
+                    together.
+                  </p>
+                </div>
+
+                <div className="flex flex-col items-start sm:items-end gap-3">
+                  <span className="text-[20px] font-semibold text-slate-800">
+                    Approx total: RM {totalPrice.toFixed(2)}
+                  </span>
+                  <Link to="/about" className="ws-button-primary text-xs">
+                    Help us build this
+                  </Link>
+                </div>
+              </div>
             </>
           )}
         </div>
