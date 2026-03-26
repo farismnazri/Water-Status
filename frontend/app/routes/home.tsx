@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import {
   Waves,
@@ -9,25 +9,32 @@ import {
 import { API_BASE } from "../lib/api";
 import { HeroPreviewMap } from "../components/HeroPreviewMap";
 import ShinyText from "../components/ShinyText";
+import {
+  fetchForecastSummaries,
+  formatPercent,
+  formatRainAmount,
+  formatShortDate,
+  formatTemperature,
+  formatWind,
+  getWeatherCodeMeta,
+  OPEN_METEO_ATTRIBUTION_LABEL,
+  OPEN_METEO_ATTRIBUTION_URL,
+  type WeatherForecastSummary,
+} from "../lib/weather";
 
 type SensorType = "rain" | "water_level" | "temperature";
 
-type Sensor = {
+type HomePreviewItem = {
   id: string;
   name: string;
-  type: SensorType;
   location: string;
+  type: SensorType;
   unit: string;
   latitude: number | null;
   longitude: number | null;
-  is_active: boolean;
-};
-
-type LatestReading = {
-  sensor_id: string;
-  value: number;
-  unit?: string;
-  timestamp?: string;
+  value: number | null;
+  timestamp?: string | null;
+  source?: string;
 };
 
 type PreviewItem = {
@@ -37,8 +44,8 @@ type PreviewItem = {
   type: SensorType;
   display: string;
   value: number | null;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
 };
 
 type PreviewByType = Record<SensorType, PreviewItem[]>;
@@ -50,7 +57,6 @@ const previewSections = [
     icon: CloudRain,
     shellClass: "bg-sky-100",
     iconClass: "text-sky-500",
-    markerColor: "#38bdf8",
     activeItemClass: "border-sky-200/90 bg-sky-50/82",
   },
   {
@@ -59,7 +65,6 @@ const previewSections = [
     icon: Waves,
     shellClass: "bg-emerald-100",
     iconClass: "text-emerald-500",
-    markerColor: "#34d399",
     activeItemClass: "border-emerald-200/90 bg-emerald-50/82",
   },
   {
@@ -68,109 +73,104 @@ const previewSections = [
     icon: ThermometerSun,
     shellClass: "bg-rose-100",
     iconClass: "text-rose-500",
-    markerColor: "#fb7185",
     activeItemClass: "border-rose-200/90 bg-rose-50/82",
   },
 ];
 
-const demoPreviewByType: PreviewByType = {
-  rain: [
-    {
-      id: "demo-rain-1",
-      name: "KLCC Rain Gauge",
-      location: "Kuala Lumpur City Centre",
-      type: "rain",
-      display: "Light rain · 1.2 mm",
-      value: 1.2,
-      latitude: 3.1563,
-      longitude: 101.7117,
-    },
-    {
-      id: "demo-rain-2",
-      name: "Batu Caves Rain Gauge",
-      location: "Batu Caves",
-      type: "rain",
-      display: "Moderate rain · 4.8 mm",
-      value: 4.8,
-      latitude: 3.2379,
-      longitude: 101.6843,
-    },
-    {
-      id: "demo-rain-3",
-      name: "Putrajaya Rain Gauge",
-      location: "Presint 9, Putrajaya",
-      type: "rain",
-      display: "No rain",
-      value: 0,
-      latitude: 2.9264,
-      longitude: 101.6964,
-    },
-  ],
-  water_level: [
-    {
-      id: "demo-water-1",
-      name: "Sungai Klang Watch",
-      location: "Masjid Jamek",
-      type: "water_level",
-      display: "2.4 m",
-      value: 2.4,
-      latitude: 3.149,
-      longitude: 101.695,
-    },
-    {
-      id: "demo-water-2",
-      name: "Sungai Gombak Watch",
-      location: "Jalan Tun Razak",
-      type: "water_level",
-      display: "1.8 m",
-      value: 1.8,
-      latitude: 3.166,
-      longitude: 101.72,
-    },
-    {
-      id: "demo-water-3",
-      name: "Ampang Spillway",
-      location: "Ampang",
-      type: "water_level",
-      display: "1.3 m",
-      value: 1.3,
-      latitude: 3.1498,
-      longitude: 101.7611,
-    },
-  ],
-  temperature: [
-    {
-      id: "demo-temp-1",
-      name: "Subang Weather Mast",
-      location: "Subang Jaya",
-      type: "temperature",
-      display: "31.6 °C",
-      value: 31.6,
-      latitude: 3.081,
-      longitude: 101.585,
-    },
-    {
-      id: "demo-temp-2",
-      name: "Cyberjaya Weather Mast",
-      location: "Cyberjaya",
-      type: "temperature",
-      display: "30.9 °C",
-      value: 30.9,
-      latitude: 2.9225,
-      longitude: 101.6501,
-    },
-    {
-      id: "demo-temp-3",
-      name: "Genting Weather Mast",
-      location: "Genting Highlands",
-      type: "temperature",
-      display: "23.4 °C",
-      value: 23.4,
-      latitude: 3.4238,
-      longitude: 101.7932,
-    },
-  ],
-};
+const PREVIEW_REQUEST_TIMEOUT_MS = 4500;
+
+const fallbackPreviewItems: HomePreviewItem[] = [
+  {
+    id: "demo-rain-1",
+    name: "KLCC Rain Gauge",
+    location: "Kuala Lumpur City Centre",
+    type: "rain",
+    unit: "mm/h",
+    value: 1.2,
+    latitude: 3.1563,
+    longitude: 101.7117,
+  },
+  {
+    id: "demo-rain-2",
+    name: "Batu Caves Rain Gauge",
+    location: "Batu Caves",
+    type: "rain",
+    unit: "mm/h",
+    value: 4.8,
+    latitude: 3.2379,
+    longitude: 101.6843,
+  },
+  {
+    id: "demo-rain-3",
+    name: "Putrajaya Rain Gauge",
+    location: "Presint 9, Putrajaya",
+    type: "rain",
+    unit: "mm/h",
+    value: 0,
+    latitude: 2.9264,
+    longitude: 101.6964,
+  },
+  {
+    id: "demo-water-1",
+    name: "Sungai Klang Watch",
+    location: "Masjid Jamek",
+    type: "water_level",
+    unit: "m",
+    value: 2.4,
+    latitude: 3.149,
+    longitude: 101.695,
+  },
+  {
+    id: "demo-water-2",
+    name: "Sungai Gombak Watch",
+    location: "Jalan Tun Razak",
+    type: "water_level",
+    unit: "m",
+    value: 1.8,
+    latitude: 3.166,
+    longitude: 101.72,
+  },
+  {
+    id: "demo-water-3",
+    name: "Ampang Spillway",
+    location: "Ampang",
+    type: "water_level",
+    unit: "m",
+    value: 1.3,
+    latitude: 3.1498,
+    longitude: 101.7611,
+  },
+  {
+    id: "demo-temp-1",
+    name: "Subang Weather Mast",
+    location: "Subang Jaya",
+    type: "temperature",
+    unit: "C",
+    value: 31.6,
+    latitude: 3.081,
+    longitude: 101.585,
+  },
+  {
+    id: "demo-temp-2",
+    name: "Cyberjaya Weather Mast",
+    location: "Cyberjaya",
+    type: "temperature",
+    unit: "C",
+    value: 30.9,
+    latitude: 2.9225,
+    longitude: 101.6501,
+  },
+  {
+    id: "demo-temp-3",
+    name: "Genting Weather Mast",
+    location: "Genting Highlands",
+    type: "temperature",
+    unit: "C",
+    value: 23.4,
+    latitude: 3.4238,
+    longitude: 101.7932,
+  },
+];
 
 function formatReadingValue(value: number): string {
   if (!Number.isFinite(value)) return "—";
@@ -194,31 +194,31 @@ function rainLabel(value: number): string {
 }
 
 function hasCoordinates(
-  sensor: Pick<Sensor, "latitude" | "longitude">
-): sensor is Pick<Sensor, "latitude" | "longitude"> & {
+  item: PreviewItem
+): item is PreviewItem & {
   latitude: number;
   longitude: number;
 } {
   return (
-    typeof sensor.latitude === "number" &&
-    Number.isFinite(sensor.latitude) &&
-    typeof sensor.longitude === "number" &&
-    Number.isFinite(sensor.longitude)
+    typeof item.latitude === "number" &&
+    Number.isFinite(item.latitude) &&
+    typeof item.longitude === "number" &&
+    Number.isFinite(item.longitude)
   );
 }
 
-function formatPreviewDisplay(sensor: Sensor, latest?: LatestReading): {
+function formatPreviewDisplay(item: HomePreviewItem): {
   value: number | null;
   display: string;
 } {
-  if (!latest || latest.value === null || latest.value === undefined) {
+  if (item.value === null || item.value === undefined) {
     return { value: null, display: "Waiting data" };
   }
 
-  const value = Number(latest.value);
-  const unit = normalizeUnit(latest.unit || sensor.unit);
+  const value = Number(item.value);
+  const unit = normalizeUnit(item.unit);
 
-  if (sensor.type === "rain") {
+  if (item.type === "rain") {
     const label = rainLabel(value);
     const numeric = unit ? `${formatReadingValue(value)} ${unit}` : formatReadingValue(value);
     return {
@@ -248,56 +248,65 @@ function getRotatingPair<T>(items: T[], step: number): T[] {
 
 export default function Home() {
   const isClient = typeof window !== "undefined";
-  const [sensors, setSensors] = useState<Sensor[]>([]);
-  const [latestReadingsBySensor, setLatestReadingsBySensor] = useState<
-    Record<string, LatestReading>
-  >({});
+  const hasLoadedPreviewRef = useRef(false);
+  const [previewItems, setPreviewItems] = useState<HomePreviewItem[]>([]);
   const [previewLoading, setPreviewLoading] = useState(true);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [isFallbackPreview, setIsFallbackPreview] = useState(false);
   const [rotationStep, setRotationStep] = useState(0);
   const [isPreviewPaused, setIsPreviewPaused] = useState(false);
   const [hoveredPreviewId, setHoveredPreviewId] = useState<string | null>(null);
+  const [forecastLoading, setForecastLoading] = useState(false);
+  const [forecastBySensorId, setForecastBySensorId] = useState<
+    Record<string, WeatherForecastSummary>
+  >({});
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadPreview() {
+      const isInitialLoad = !hasLoadedPreviewRef.current;
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), PREVIEW_REQUEST_TIMEOUT_MS);
+
       try {
-        setPreviewLoading(true);
-        setPreviewError(null);
-
-        const sensorsRes = await fetch(`${API_BASE}/sensors`);
-        if (!sensorsRes.ok) throw new Error(`HTTP ${sensorsRes.status}`);
-
-        const sensorsData = await sensorsRes.json();
-        const sensorsList = sensorsData.sensors ?? sensorsData;
-        const parsedSensors = Array.isArray(sensorsList) ? sensorsList : [];
-
-        const latestRes = await fetch(`${API_BASE}/sensor-readings/latest-by-sensor`);
-        let latestBySensor: Record<string, LatestReading> = {};
-
-        if (latestRes.ok) {
-          const latestData = await latestRes.json();
-          const latestRows = latestData.latest_readings ?? [];
-          latestBySensor = latestRows.reduce(
-            (acc: Record<string, LatestReading>, row: LatestReading) => {
-              if (row?.sensor_id) acc[row.sensor_id] = row;
-              return acc;
-            },
-            {}
-          );
+        if (isInitialLoad) {
+          setPreviewLoading(true);
+          setPreviewError(null);
         }
+
+        const response = await fetch(`${API_BASE}/home-preview`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        const data = await response.json();
+        const nextItems = Array.isArray(data?.items) ? data.items : [];
 
         if (!isMounted) return;
 
-        setSensors(parsedSensors);
-        setLatestReadingsBySensor(latestBySensor);
+        if (nextItems.length === 0) {
+          setPreviewItems(fallbackPreviewItems);
+          setIsFallbackPreview(true);
+          setPreviewError(null);
+          return;
+        }
+
+        setPreviewItems(nextItems);
+        setIsFallbackPreview(false);
+        setPreviewError(null);
       } catch (error) {
         console.error(error);
         if (!isMounted) return;
-        setPreviewError("Could not load live station previews right now.");
+
+        setPreviewItems(fallbackPreviewItems);
+        setIsFallbackPreview(true);
+        setPreviewError(null);
       } finally {
-        if (isMounted) setPreviewLoading(false);
+        window.clearTimeout(timeout);
+        if (!isMounted) return;
+        hasLoadedPreviewRef.current = true;
+        setPreviewLoading(false);
       }
     }
 
@@ -317,31 +326,25 @@ export default function Home() {
       temperature: [],
     };
 
-    sensors.forEach((sensor) => {
-      if (!sensor.is_active || !hasCoordinates(sensor)) {
-        return;
-      }
-
+    previewItems.forEach((item) => {
       if (
-        sensor.type !== "rain" &&
-        sensor.type !== "water_level" &&
-        sensor.type !== "temperature"
+        item.type !== "rain" &&
+        item.type !== "water_level" &&
+        item.type !== "temperature"
       ) {
         return;
       }
 
-      const latest = latestReadingsBySensor[sensor.id];
-      const formatted = formatPreviewDisplay(sensor, latest);
-
-      grouped[sensor.type].push({
-        id: sensor.id,
-        name: sensor.name,
-        location: sensor.location,
-        type: sensor.type,
+      const formatted = formatPreviewDisplay(item);
+      grouped[item.type].push({
+        id: item.id,
+        name: item.name,
+        location: item.location,
+        type: item.type,
         display: formatted.display,
         value: formatted.value,
-        latitude: sensor.latitude,
-        longitude: sensor.longitude,
+        latitude: item.latitude,
+        longitude: item.longitude,
       });
     });
 
@@ -355,24 +358,16 @@ export default function Home() {
     });
 
     return grouped;
-  }, [latestReadingsBySensor, sensors]);
+  }, [previewItems]);
 
-  const hasLivePreviewItems = useMemo(
+  const hasAnyPreviewItems = useMemo(
     () => Object.values(previewByType).some((items) => items.length > 0),
     [previewByType]
   );
 
-  const isLocalPreviewHost =
-    import.meta.env.DEV ||
-    (typeof window !== "undefined" &&
-      ["localhost", "127.0.0.1"].includes(window.location.hostname));
-  const showDemoPreview =
-    isLocalPreviewHost && !previewLoading && (!!previewError || !hasLivePreviewItems);
-  const activePreviewByType = showDemoPreview ? demoPreviewByType : previewByType;
-
   const previewRotationEnabled = useMemo(
-    () => previewSections.some((section) => activePreviewByType[section.type].length > 2),
-    [activePreviewByType]
+    () => previewSections.some((section) => previewByType[section.type].length > 2),
+    [previewByType]
   );
 
   useEffect(() => {
@@ -388,17 +383,91 @@ export default function Home() {
   const visiblePreviewByType = useMemo(
     () =>
       ({
-        rain: getRotatingPair(activePreviewByType.rain, rotationStep),
-        water_level: getRotatingPair(activePreviewByType.water_level, rotationStep),
-        temperature: getRotatingPair(activePreviewByType.temperature, rotationStep),
+        rain: getRotatingPair(previewByType.rain, rotationStep),
+        water_level: getRotatingPair(previewByType.water_level, rotationStep),
+        temperature: getRotatingPair(previewByType.temperature, rotationStep),
       }) satisfies PreviewByType,
-    [activePreviewByType, rotationStep]
+    [previewByType, rotationStep]
   );
 
   const visiblePreviewItems = useMemo(
     () => previewSections.flatMap((section) => visiblePreviewByType[section.type]),
     [visiblePreviewByType]
   );
+
+  const visibleMapItems = useMemo(
+    () => visiblePreviewItems.filter(hasCoordinates),
+    [visiblePreviewItems]
+  );
+
+  const forecastTargets = useMemo(() => {
+    const seenLocations = new Set<string>();
+    const targets: PreviewItem[] = [];
+
+    for (const item of visiblePreviewItems) {
+      if (!hasCoordinates(item)) continue;
+
+      const locationKey = item.location.trim().toLowerCase();
+      if (seenLocations.has(locationKey)) continue;
+
+      seenLocations.add(locationKey);
+      targets.push(item);
+      if (targets.length === 3) break;
+    }
+
+    return targets;
+  }, [visiblePreviewItems]);
+
+  const forecastTargetKey = useMemo(
+    () => forecastTargets.map((item) => item.id).join(","),
+    [forecastTargets]
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+    const sensorIds = forecastTargets.map((item) => item.id);
+
+    if (isFallbackPreview || sensorIds.length === 0) {
+      setForecastBySensorId({});
+      setForecastLoading(false);
+      return;
+    }
+
+    async function loadForecasts() {
+      try {
+        setForecastLoading(true);
+        const summaries = await fetchForecastSummaries(sensorIds);
+        if (!isMounted) return;
+
+        const nextBySensorId = summaries.reduce(
+          (acc: Record<string, WeatherForecastSummary>, summary) => {
+            if (summary?.sensor_id) {
+              acc[summary.sensor_id] = summary;
+            }
+            return acc;
+          },
+          {}
+        );
+
+        setForecastBySensorId(nextBySensorId);
+      } catch (error) {
+        console.error(error);
+        if (!isMounted) return;
+        setForecastBySensorId({});
+      } finally {
+        if (isMounted) setForecastLoading(false);
+      }
+    }
+
+    loadForecasts();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [forecastTargetKey, forecastTargets, isFallbackPreview]);
+
+  const shouldShowForecastContext =
+    !isFallbackPreview && forecastTargets.length > 0;
 
   return (
     <main className="min-h-screen">
@@ -414,34 +483,34 @@ export default function Home() {
                   “What&apos;s the weather like today?”
                 </p>
 
-<h1 className="space-y-0 overflow-visible pb-2">
-  <ShinyText
-    text="Stop guessing."
-    speed={3}
-    delay={0.5}
-    color="#59aaf7"
-    shineColor="#b8ddff"
-    spread={100}
-    direction="left"
-    yoyo={false}
-    pauseOnHover={false}
-    disabled={false}
-    className="block overflow-visible pb-[0.08em] text-[3.4rem] font-semibold leading-[0.98] tracking-[-0.04em] sm:text-[4.7rem]"
-  />
-<ShinyText
-  text="Start seeing."
-  speed={3}
-  delay={0.7}
-  color="#59aaf7"
-  shineColor="#b8ddff"
-  spread={100}
-  direction="left"
-  yoyo={false}
-  pauseOnHover={false}
-  disabled={false}
-  className="block -mt-[0.25em] overflow-visible pb-[0.08em] text-[3.4rem] font-semibold leading-[0.98] tracking-[-0.04em] sm:text-[4.7rem]"
-/>
-</h1>
+                <h1 className="space-y-0 overflow-visible pb-2">
+                  <ShinyText
+                    text="Stop guessing."
+                    speed={3}
+                    delay={0.5}
+                    color="#59aaf7"
+                    shineColor="#b8ddff"
+                    spread={100}
+                    direction="left"
+                    yoyo={false}
+                    pauseOnHover={false}
+                    disabled={false}
+                    className="block overflow-visible pb-[0.08em] text-[3.4rem] font-semibold leading-[0.98] tracking-[-0.04em] sm:text-[4.7rem]"
+                  />
+                  <ShinyText
+                    text="Start seeing."
+                    speed={3}
+                    delay={0.7}
+                    color="#59aaf7"
+                    shineColor="#b8ddff"
+                    spread={100}
+                    direction="left"
+                    yoyo={false}
+                    pauseOnHover={false}
+                    disabled={false}
+                    className="block -mt-[0.25em] overflow-visible pb-[0.08em] text-[3.4rem] font-semibold leading-[0.98] tracking-[-0.04em] sm:text-[4.7rem]"
+                  />
+                </h1>
 
                 <p className="max-w-xl text-[15px] leading-7 text-slate-700/88 sm:text-base -mt-[0.8em]">
                   We bring together rain, river level and temperature from
@@ -451,10 +520,13 @@ export default function Home() {
               </div>
 
               <HeroPreviewMap
-                items={visiblePreviewItems}
+                items={visibleMapItems}
                 hoveredPreviewId={hoveredPreviewId}
                 isClient={isClient}
                 loading={previewLoading}
+                error={previewError}
+                hasPreviewItems={hasAnyPreviewItems}
+                isFallbackPreview={isFallbackPreview}
               />
             </div>
           </div>
@@ -476,30 +548,63 @@ export default function Home() {
                       <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-rose-500" />
                     </span>
                     <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[var(--ws-text-muted)]">
-                      Live
+                      {isFallbackPreview ? "Fallback" : "Live"}
                     </p>
                   </div>
-                  <p className="text-[11px] text-slate-500">Updated recently</p>
+                  <p className="text-[11px] text-slate-500">
+                    {isFallbackPreview
+                      ? "Showing built-in station samples while live data reconnects."
+                      : "Updated recently"}
+                  </p>
                 </div>
               </div>
 
               <div className="mt-4 flex-1">
                 {previewLoading ? (
-                  <div className="space-y-2">
-                    {Array.from({ length: 3 }).map((_, index) => (
-                      <div
-                        key={index}
-                        className="rounded-xl border border-slate-200/75 bg-white/88 px-3 py-3"
-                      >
-                        <div className="h-2.5 w-20 rounded-full bg-sky-100" />
-                        <div className="mt-2 space-y-2">
-                          <div className="h-3 w-full rounded-full bg-slate-100" />
-                          <div className="h-3 w-4/5 rounded-full bg-slate-100" />
+                  <div className="space-y-3">
+                    {previewSections.map((section) => {
+                      const Icon = section.icon;
+
+                      return (
+                        <div key={section.type} className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`inline-flex h-6 w-6 items-center justify-center rounded-full ${section.shellClass}`}
+                            >
+                              <Icon className={`h-3.5 w-3.5 ${section.iconClass}`} />
+                            </span>
+                            <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                              {section.label}
+                            </span>
+                          </div>
+
+                          <div className="space-y-2">
+                            {Array.from({ length: 2 }).map((_, index) => (
+                              <div
+                                key={`${section.type}-${index}`}
+                                className="ws-sensor-skeleton-card rounded-xl border px-3 py-3"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0">
+                                    <p className="ws-skeleton-text text-xs font-semibold uppercase tracking-[0.06em]">
+                                      Loading
+                                    </p>
+                                    <p className="ws-skeleton-subtext mt-1 text-[10px] uppercase tracking-[0.08em]">
+                                      Loading
+                                    </p>
+                                  </div>
+                                  <p className="ws-skeleton-text shrink-0 text-right text-[10px] font-medium uppercase tracking-[0.08em]">
+                                    Loading
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
-                ) : previewError && !showDemoPreview ? (
+                ) : previewError && !hasAnyPreviewItems ? (
                   <div className="rounded-xl border border-slate-200/75 bg-white/88 px-3 py-3 text-xs text-slate-600">
                     {previewError}
                   </div>
@@ -582,6 +687,122 @@ export default function Home() {
             </div>
           </div>
         </div>
+
+        {shouldShowForecastContext ? (
+          <div className="mt-6 space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Forecast Context
+                </p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Short-range weather context around the live stations already on screen.
+                </p>
+              </div>
+              <a
+                href={OPEN_METEO_ATTRIBUTION_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-700"
+              >
+                {OPEN_METEO_ATTRIBUTION_LABEL}
+              </a>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              {forecastTargets.map((item) => {
+                const summary = forecastBySensorId[item.id];
+                const current = summary?.current;
+                const next6Hours = summary?.next_6h;
+                const today = summary?.daily?.[0];
+                const weatherMeta = getWeatherCodeMeta(
+                  current?.weather_code,
+                  current?.is_day
+                );
+                const WeatherIcon = weatherMeta.Icon;
+
+                return (
+                  <div
+                    key={`forecast-${item.id}`}
+                    className="ws-card ws-card-anim rounded-[1.4rem] border border-[var(--ws-border-subtle)] bg-white/72 p-4 shadow-[0_14px_28px_rgba(15,23,42,0.06)]"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold text-slate-800">
+                          {item.location}
+                        </p>
+                        <p className="truncate text-[11px] text-slate-500">
+                          {item.name}
+                        </p>
+                      </div>
+                      <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600">
+                        <WeatherIcon className="h-5 w-5" />
+                      </span>
+                    </div>
+
+                    {forecastLoading && !summary ? (
+                      <div className="mt-4 space-y-2">
+                        <div className="ws-skeleton h-8 rounded-xl" />
+                        <div className="ws-skeleton h-16 rounded-xl" />
+                      </div>
+                    ) : summary?.status === "ok" ? (
+                      <>
+                        <div className="mt-4 flex items-end justify-between gap-3">
+                          <div>
+                            <p className="text-3xl font-semibold tracking-tight text-slate-900">
+                              {formatTemperature(current?.temperature_2m)}
+                            </p>
+                            <p className="mt-1 text-[11px] text-slate-500">
+                              Feels like {formatTemperature(current?.apparent_temperature)}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <p className="text-xs font-medium text-slate-700">
+                              {weatherMeta.label}
+                            </p>
+                            <p className="mt-1 text-[11px] text-slate-500">
+                              Wind {formatWind(current?.wind_speed_10m)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-3 gap-2 text-[11px]">
+                          <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-2">
+                            <p className="text-slate-500">Next 6h rain</p>
+                            <p className="mt-1 font-semibold text-slate-800">
+                              {formatPercent(next6Hours?.max_precipitation_probability)}
+                            </p>
+                          </div>
+                          <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-2">
+                            <p className="text-slate-500">Today high / low</p>
+                            <p className="mt-1 font-semibold text-slate-800">
+                              {formatTemperature(today?.temperature_2m_max)} /{" "}
+                              {formatTemperature(today?.temperature_2m_min)}
+                            </p>
+                          </div>
+                          <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-2">
+                            <p className="text-slate-500">Next 6h rain sum</p>
+                            <p className="mt-1 font-semibold text-slate-800">
+                              {formatRainAmount(next6Hours?.rain_sum)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <p className="mt-3 text-[10px] text-slate-500">
+                          Updated {formatShortDate(summary.generated_at || current?.time || null)}
+                        </p>
+                      </>
+                    ) : (
+                      <div className="mt-4 rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3 text-xs text-slate-500">
+                        Forecast context is unavailable for this location right now.
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
       </section>
     </main>
   );
