@@ -2,7 +2,7 @@
 // app/routes/sensors.tsx
 
 import React from "react";
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 import {
   CloudRain,
@@ -23,6 +23,17 @@ import {
 } from "react-leaflet";
 import "leaflet/dist/leaflet.css";
 import { API_BASE } from "../lib/api";
+import {
+  fetchForecastSummaries,
+  formatPercent,
+  formatRainAmount,
+  formatShortDate,
+  formatTemperature,
+  formatWind,
+  getWeatherCodeMeta,
+  OPEN_METEO_ATTRIBUTION_LABEL,
+  OPEN_METEO_ATTRIBUTION_URL,
+} from "../lib/weather";
 
 
 export function meta({}: Route.MetaArgs) {
@@ -56,6 +67,178 @@ type LatestReading = {
 };
 
 type FilterKey = "all" | "rain" | "water_level" | "temperature";
+
+const STATIONS_REQUEST_TIMEOUT_MS = 4500;
+
+const fallbackSensors: Sensor[] = [
+  {
+    id: "demo-rain-1",
+    name: "KLCC Rain Gauge",
+    type: "rain",
+    location: "Kuala Lumpur City Centre",
+    unit: "mm/h",
+    latitude: 3.1563,
+    longitude: 101.7117,
+    is_active: true,
+  },
+  {
+    id: "demo-rain-2",
+    name: "Batu Caves Rain Gauge",
+    type: "rain",
+    location: "Batu Caves",
+    unit: "mm/h",
+    latitude: 3.2379,
+    longitude: 101.6843,
+    is_active: true,
+  },
+  {
+    id: "demo-rain-3",
+    name: "Putrajaya Rain Gauge",
+    type: "rain",
+    location: "Presint 9, Putrajaya",
+    unit: "mm/h",
+    latitude: 2.9264,
+    longitude: 101.6964,
+    is_active: true,
+  },
+  {
+    id: "demo-water-1",
+    name: "Sungai Klang Watch",
+    type: "water_level",
+    location: "Masjid Jamek",
+    unit: "m",
+    latitude: 3.149,
+    longitude: 101.695,
+    is_active: true,
+  },
+  {
+    id: "demo-water-2",
+    name: "Sungai Gombak Watch",
+    type: "water_level",
+    location: "Jalan Tun Razak",
+    unit: "m",
+    latitude: 3.166,
+    longitude: 101.72,
+    is_active: true,
+  },
+  {
+    id: "demo-water-3",
+    name: "Ampang Spillway",
+    type: "water_level",
+    location: "Ampang",
+    unit: "m",
+    latitude: 3.1498,
+    longitude: 101.7611,
+    is_active: true,
+  },
+  {
+    id: "demo-temp-1",
+    name: "Subang Weather Mast",
+    type: "temperature",
+    location: "Subang Jaya",
+    unit: "C",
+    latitude: 3.081,
+    longitude: 101.585,
+    is_active: true,
+  },
+  {
+    id: "demo-temp-2",
+    name: "Cyberjaya Weather Mast",
+    type: "temperature",
+    location: "Cyberjaya",
+    unit: "C",
+    latitude: 2.9225,
+    longitude: 101.6501,
+    is_active: true,
+  },
+  {
+    id: "demo-temp-3",
+    name: "Genting Weather Mast",
+    type: "temperature",
+    location: "Genting Highlands",
+    unit: "C",
+    latitude: 3.4238,
+    longitude: 101.7932,
+    is_active: true,
+  },
+];
+
+function fallbackTimestamp(minutesAgo: number): string {
+  return new Date(Date.now() - minutesAgo * 60_000).toISOString();
+}
+
+function buildFallbackLatestReadings(): Record<string, LatestReading> {
+  const rows: LatestReading[] = [
+    {
+      sensor_id: "demo-rain-1",
+      value: 1.2,
+      unit: "mm/h",
+      timestamp: fallbackTimestamp(6),
+      source: "fallback",
+    },
+    {
+      sensor_id: "demo-rain-2",
+      value: 4.8,
+      unit: "mm/h",
+      timestamp: fallbackTimestamp(9),
+      source: "fallback",
+    },
+    {
+      sensor_id: "demo-rain-3",
+      value: 0,
+      unit: "mm/h",
+      timestamp: fallbackTimestamp(12),
+      source: "fallback",
+    },
+    {
+      sensor_id: "demo-water-1",
+      value: 2.4,
+      unit: "m",
+      timestamp: fallbackTimestamp(5),
+      source: "fallback",
+    },
+    {
+      sensor_id: "demo-water-2",
+      value: 1.8,
+      unit: "m",
+      timestamp: fallbackTimestamp(8),
+      source: "fallback",
+    },
+    {
+      sensor_id: "demo-water-3",
+      value: 1.3,
+      unit: "m",
+      timestamp: fallbackTimestamp(11),
+      source: "fallback",
+    },
+    {
+      sensor_id: "demo-temp-1",
+      value: 31.6,
+      unit: "C",
+      timestamp: fallbackTimestamp(4),
+      source: "fallback",
+    },
+    {
+      sensor_id: "demo-temp-2",
+      value: 30.9,
+      unit: "C",
+      timestamp: fallbackTimestamp(7),
+      source: "fallback",
+    },
+    {
+      sensor_id: "demo-temp-3",
+      value: 23.4,
+      unit: "C",
+      timestamp: fallbackTimestamp(14),
+      source: "fallback",
+    },
+  ];
+
+  return rows.reduce((acc: Record<string, LatestReading>, row) => {
+    acc[row.sensor_id] = row;
+    return acc;
+  }, {});
+}
 
 function markerColorForType(type: Sensor["type"]): string {
   if (type === "rain") return "#0ea5e9";         // sky blue
@@ -143,6 +326,8 @@ function rainLayerStyle(value: number): {
 export default function SensorsPage() {
   const isClient = typeof window !== "undefined";
   const [searchParams, setSearchParams] = useSearchParams();
+  const hasLoadedDataRef = useRef(false);
+  const hasSuccessfulLiveDataRef = useRef(false);
 
   // Read ?type= from URL on first render
   const initialTypeFromUrl = (() => {
@@ -159,50 +344,98 @@ export default function SensorsPage() {
   >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [isFallbackData, setIsFallbackData] = useState(false);
   const [activeFilter, setActiveFilter] = useState<FilterKey>(initialTypeFromUrl);
   const [locationFilter, setLocationFilter] = useState<string>("all");
   const [showRainLayer, setShowRainLayer] = useState(true);
+  const [selectedSensorId, setSelectedSensorId] = useState<string>("");
+  const [selectedForecast, setSelectedForecast] = useState<any | null>(null);
+  const [forecastLoading, setForecastLoading] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadData() {
+      const isInitialLoad = !hasLoadedDataRef.current;
+      const sensorsController = new AbortController();
+      const sensorsTimeout = window.setTimeout(
+        () => sensorsController.abort(),
+        STATIONS_REQUEST_TIMEOUT_MS
+      );
+
       try {
-        setLoading(true);
+        if (isInitialLoad) {
+          setLoading(true);
+        }
         setError(null);
 
-        const sensorsRes = await fetch(`${API_BASE}/sensors`);
+        const sensorsRes = await fetch(`${API_BASE}/sensors`, {
+          signal: sensorsController.signal,
+        });
         if (!sensorsRes.ok) throw new Error(`HTTP ${sensorsRes.status}`);
 
         const sensorsData = await sensorsRes.json();
         const sensorsList = sensorsData.sensors ?? sensorsData;
-        if (!isMounted) return;
-        setSensors(Array.isArray(sensorsList) ? sensorsList : []);
-        setLoading(false);
+        const nextSensors = Array.isArray(sensorsList) ? sensorsList : [];
+        if (nextSensors.length === 0) {
+          throw new Error("No stations returned");
+        }
 
         // Load latest values second so station list can render immediately.
         let latestBySensor: Record<string, LatestReading> = {};
-        const latestRes = await fetch(`${API_BASE}/sensor-readings/latest-by-sensor`);
-        if (latestRes.ok) {
-          const latestData = await latestRes.json();
-          const latestRows = latestData.latest_readings ?? [];
-          latestBySensor = latestRows.reduce(
-            (acc: Record<string, LatestReading>, row: LatestReading) => {
-              if (row?.sensor_id) acc[row.sensor_id] = row;
-              return acc;
-            },
-            {}
-          );
+        const latestController = new AbortController();
+        const latestTimeout = window.setTimeout(
+          () => latestController.abort(),
+          STATIONS_REQUEST_TIMEOUT_MS
+        );
+
+        try {
+          const latestRes = await fetch(`${API_BASE}/sensor-readings/latest-by-sensor`, {
+            signal: latestController.signal,
+          });
+          if (latestRes.ok) {
+            const latestData = await latestRes.json();
+            const latestRows = latestData.latest_readings ?? [];
+            latestBySensor = latestRows.reduce(
+              (acc: Record<string, LatestReading>, row: LatestReading) => {
+                if (row?.sensor_id) acc[row.sensor_id] = row;
+                return acc;
+              },
+              {}
+            );
+          }
+        } catch (latestError) {
+          console.error(latestError);
+        } finally {
+          window.clearTimeout(latestTimeout);
         }
 
         if (!isMounted) return;
+        setSensors(nextSensors);
         setLatestReadingsBySensor(latestBySensor);
+        setIsFallbackData(false);
+        setError(null);
+        hasSuccessfulLiveDataRef.current = true;
       } catch (err) {
         console.error(err);
         if (!isMounted) return;
-        setError("Could not load stations. Please try again in a moment.");
+
+        if (hasSuccessfulLiveDataRef.current) {
+          setError(
+            "Live refresh delayed. Showing the most recent station data already loaded."
+          );
+          return;
+        }
+
+        setSensors(fallbackSensors);
+        setLatestReadingsBySensor(buildFallbackLatestReadings());
+        setIsFallbackData(true);
+        setError(null);
       } finally {
-        if (isMounted) setLoading(false);
+        window.clearTimeout(sensorsTimeout);
+        if (!isMounted) return;
+        hasLoadedDataRef.current = true;
+        setLoading(false);
       }
     }
 
@@ -245,6 +478,59 @@ export default function SensorsPage() {
 
     return base;
   }, [sensors, activeFilter, locationFilter]);
+
+  useEffect(() => {
+    if (filtered.length === 0) {
+      setSelectedSensorId("");
+      return;
+    }
+
+    const stillVisible = filtered.some((sensor) => sensor.id === selectedSensorId);
+    if (stillVisible) return;
+
+    const preferred = filtered.find((sensor) => hasCoordinates(sensor)) ?? filtered[0];
+    setSelectedSensorId(preferred?.id ?? "");
+  }, [filtered, selectedSensorId]);
+
+  const selectedSensor = useMemo(
+    () =>
+      filtered.find((sensor) => sensor.id === selectedSensorId) ??
+      sensors.find((sensor) => sensor.id === selectedSensorId) ??
+      null,
+    [filtered, sensors, selectedSensorId]
+  );
+
+  useEffect(() => {
+    let isMounted = true;
+
+    if (!selectedSensorId || isFallbackData) {
+      setSelectedForecast(null);
+      setForecastLoading(false);
+      return;
+    }
+
+    async function loadForecast() {
+      try {
+        setForecastLoading(true);
+        setSelectedForecast(null);
+        const summaries = await fetchForecastSummaries([selectedSensorId]);
+        if (!isMounted) return;
+        setSelectedForecast(summaries[0] ?? null);
+      } catch (err) {
+        console.error(err);
+        if (!isMounted) return;
+        setSelectedForecast(null);
+      } finally {
+        if (isMounted) setForecastLoading(false);
+      }
+    }
+
+    loadForecast();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [selectedSensorId, isFallbackData]);
 
   const hasCoordinates = (sensor: Sensor): boolean =>
     typeof sensor.latitude === "number" &&
@@ -388,9 +674,9 @@ export default function SensorsPage() {
   };
 
   const getLastPing = (sensor: Sensor): string => {
-    if (!sensor.is_active) return "Offline";
-
     const latest = latestReadingsBySensor[sensor.id];
+    if (latest?.source === "fallback") return "Fallback sample";
+    if (!sensor.is_active) return "Offline";
     if (!latest?.timestamp) return "Waiting first reading";
 
     const ts = new Date(latest.timestamp);
@@ -416,6 +702,7 @@ export default function SensorsPage() {
   };
 
   const isRainMode = activeFilter === "rain";
+  const hasSensors = sensors.length > 0;
 
   return (
     <main className="min-h-screen">
@@ -517,15 +804,25 @@ export default function SensorsPage() {
           </div>
         )}
 
+        {isFallbackData && !loading && (
+          <div className="ws-card flex items-start gap-2 border border-sky-200 bg-sky-50/85 p-4 text-sm text-sky-700">
+            <AlertCircle className="w-4 h-4" />
+            <span>
+              Showing built-in station samples while the live server reconnects.
+              Filters, map interactions and station selection still work.
+            </span>
+          </div>
+        )}
+
         {error && !loading && (
-          <div className="ws-card p-4 text-sm text-rose-600 flex items-center gap-2">
+          <div className="ws-card flex items-start gap-2 border border-amber-200 bg-amber-50/85 p-4 text-sm text-amber-700">
             <AlertCircle className="w-4 h-4" />
             <span>{error}</span>
           </div>
         )}
 
         {/* Map + table of stations */}
-        {!loading && !error && (
+        {!loading && hasSensors && (
           <>
 {/* Map card */}
 <div className="ws-card overflow-hidden mb-4">
@@ -634,14 +931,30 @@ export default function SensorsPage() {
               />
             )}
 
+            {selectedSensorId === marker.sensor.id ? (
+              <CircleMarker
+                center={[marker.lat, marker.lng]}
+                radius={14}
+                interactive={false}
+                pathOptions={{
+                  stroke: false,
+                  fillColor: markerColorForType(marker.sensor.type),
+                  fillOpacity: 0.14,
+                }}
+              />
+            ) : null}
+
             <CircleMarker
               center={[marker.lat, marker.lng]}
-              radius={7}
+              radius={selectedSensorId === marker.sensor.id ? 9 : 7}
+              eventHandlers={{
+                click: () => setSelectedSensorId(marker.sensor.id),
+              }}
               pathOptions={{
                 color: markerColorForType(marker.sensor.type),
                 fillColor: markerColorForType(marker.sensor.type),
                 fillOpacity: 0.9,
-                weight: 2,
+                weight: selectedSensorId === marker.sensor.id ? 4 : 2,
               }}
             >
               <Tooltip direction="top" offset={[0, -4]} opacity={1}>
@@ -663,6 +976,198 @@ export default function SensorsPage() {
       </MapContainer>
     )}
   </div>
+</div>
+
+<div className="ws-card overflow-hidden p-4 sm:p-5">
+  <div className="flex flex-wrap items-start justify-between gap-3">
+    <div className="min-w-0">
+      <p className="text-xs uppercase tracking-wide text-slate-500">
+        Selected station forecast
+      </p>
+      {selectedSensor ? (
+        <div className="mt-2 flex items-start gap-3">
+          <TypeIcon type={selectedSensor.type} />
+          <div className="min-w-0">
+            <p className="truncate text-lg font-semibold text-slate-800">
+              {selectedSensor.name}
+            </p>
+            <p className="truncate text-sm text-slate-500">
+              {selectedSensor.location} · {typeLabel(selectedSensor.type)}
+            </p>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-slate-500">
+          Choose a station to load its short-range forecast context.
+        </p>
+      )}
+    </div>
+
+    {!isFallbackData ? (
+      <a
+        href={OPEN_METEO_ATTRIBUTION_URL}
+        target="_blank"
+        rel="noreferrer"
+        className="text-[11px] text-slate-500 underline decoration-slate-300 underline-offset-2 hover:text-slate-700"
+      >
+        {OPEN_METEO_ATTRIBUTION_LABEL}
+      </a>
+    ) : null}
+  </div>
+
+  {!selectedSensor ? null : isFallbackData ? (
+    <div className="mt-4 rounded-2xl border border-sky-200/90 bg-sky-50/80 px-4 py-4 text-sm text-sky-700">
+      Forecast context is paused in fallback mode. Live forecast details will
+      return automatically when the station server reconnects.
+    </div>
+  ) : forecastLoading && !selectedForecast ? (
+    <div className="mt-4 grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+      <div className="ws-skeleton h-32 rounded-2xl" />
+      <div className="ws-skeleton h-32 rounded-2xl" />
+    </div>
+  ) : selectedForecast?.status === "ok" ? (
+    <>
+      <div className="mt-4 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+        <div className="rounded-2xl border border-slate-200/80 bg-white/78 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-800">
+                Current conditions
+              </p>
+              <p className="mt-1 text-[11px] text-slate-500">
+                {getWeatherCodeMeta(
+                  selectedForecast.current?.weather_code,
+                  selectedForecast.current?.is_day
+                ).label}
+              </p>
+            </div>
+            <span className="inline-flex h-11 w-11 items-center justify-center rounded-full bg-sky-50 text-sky-600">
+              {(() => {
+                const Icon = getWeatherCodeMeta(
+                  selectedForecast.current?.weather_code,
+                  selectedForecast.current?.is_day
+                ).Icon;
+                return <Icon className="h-5 w-5" />;
+              })()}
+            </span>
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-4">
+            <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
+              <p className="text-[11px] text-slate-500">Temperature</p>
+              <p className="mt-1 text-xl font-semibold text-slate-900">
+                {formatTemperature(selectedForecast.current?.temperature_2m)}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
+              <p className="text-[11px] text-slate-500">Feels like</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">
+                {formatTemperature(selectedForecast.current?.apparent_temperature)}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
+              <p className="text-[11px] text-slate-500">Humidity</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">
+                {formatPercent(selectedForecast.current?.relative_humidity_2m)}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
+              <p className="text-[11px] text-slate-500">Wind</p>
+              <p className="mt-1 text-lg font-semibold text-slate-900">
+                {formatWind(selectedForecast.current?.wind_speed_10m)}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200/80 bg-white/78 p-4">
+          <p className="text-sm font-semibold text-slate-800">Next 12 hours</p>
+          <div className="mt-4 space-y-3 text-sm">
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
+              <span className="text-slate-500">Max rain chance</span>
+              <span className="font-semibold text-slate-900">
+                {formatPercent(selectedForecast.next_12h?.max_precipitation_probability)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
+              <span className="text-slate-500">Rain sum</span>
+              <span className="font-semibold text-slate-900">
+                {formatRainAmount(selectedForecast.next_12h?.rain_sum)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
+              <span className="text-slate-500">Max wind</span>
+              <span className="font-semibold text-slate-900">
+                {formatWind(selectedForecast.next_12h?.max_wind_speed_10m)}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-slate-800">3-day outlook</p>
+          <p className="text-[11px] text-slate-500">
+            Updated {formatShortDate(selectedForecast.generated_at)}
+          </p>
+        </div>
+
+        <div className="mt-3 grid gap-3 md:grid-cols-3">
+          {(selectedForecast.daily ?? []).slice(0, 3).map((day: any) => {
+            const meta = getWeatherCodeMeta(day?.weather_code, true);
+            const DayIcon = meta.Icon;
+
+            return (
+              <div
+                key={`${selectedSensor.id}-${day?.date ?? "day"}`}
+                className="rounded-2xl border border-slate-200/80 bg-white/78 p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">
+                      {formatShortDate(day?.date)}
+                    </p>
+                    <p className="mt-1 text-[11px] text-slate-500">{meta.label}</p>
+                  </div>
+                  <span className="inline-flex h-9 w-9 items-center justify-center rounded-full bg-sky-50 text-sky-600">
+                    <DayIcon className="h-4 w-4" />
+                  </span>
+                </div>
+
+                <div className="mt-4 space-y-2 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-slate-500">High / low</span>
+                    <span className="font-semibold text-slate-900">
+                      {formatTemperature(day?.temperature_2m_max)} /{" "}
+                      {formatTemperature(day?.temperature_2m_min)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-slate-500">Rain chance</span>
+                    <span className="font-semibold text-slate-900">
+                      {formatPercent(day?.precipitation_probability_max)}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-slate-500">Rain sum</span>
+                    <span className="font-semibold text-slate-900">
+                      {formatRainAmount(day?.rain_sum)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </>
+  ) : (
+    <div className="mt-4 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-4 text-sm text-slate-500">
+      Forecast context is unavailable for this station right now. The live sensor
+      list still reflects your primary data sources.
+    </div>
+  )}
 </div>
 
 {/* Table card */}
@@ -713,14 +1218,20 @@ export default function SensorsPage() {
         {filtered.map((sensor, i) => {
           const isEven = i % 2 === 0;
           const rowBg = isEven ? "bg-white" : "bg-[#fffdf0]";
+          const isFallbackRow =
+            isFallbackData && latestReadingsBySensor[sensor.id]?.source === "fallback";
 
           return (
             <tr
               key={sensor.id}
               className={[
                 rowBg,
-                "border-b border-[var(--ws-border-subtle)] hover:bg-sky-50/60 transition-colors",
+                selectedSensorId === sensor.id
+                  ? "bg-sky-100/80"
+                  : rowBg,
+                "cursor-pointer border-b border-[var(--ws-border-subtle)] hover:bg-sky-50/60 transition-colors",
               ].join(" ")}
+              onClick={() => setSelectedSensorId(sensor.id)}
             >
               {/* Station name + icon */}
               <td className="px-4 py-2 align-middle">
@@ -772,7 +1283,9 @@ export default function SensorsPage() {
                 <span
                   className={[
                     "inline-flex items-center gap-1 rounded-full border px-2 py-0.5",
-                    sensor.is_active
+                    isFallbackRow
+                      ? "bg-sky-50 text-sky-700 border-sky-200"
+                      : sensor.is_active
                       ? "bg-emerald-50 text-emerald-700 border-emerald-200"
                       : "bg-slate-100 text-slate-500 border-slate-200",
                   ].join(" ")}
@@ -780,10 +1293,14 @@ export default function SensorsPage() {
                   <span
                     className={[
                       "h-1.5 w-1.5 rounded-full",
-                      sensor.is_active ? "bg-emerald-500" : "bg-slate-400",
+                      isFallbackRow
+                        ? "bg-sky-500"
+                        : sensor.is_active
+                          ? "bg-emerald-500"
+                          : "bg-slate-400",
                     ].join(" ")}
                   />
-                  {sensor.is_active ? "Active" : "Offline"}
+                  {isFallbackRow ? "Fallback" : sensor.is_active ? "Active" : "Offline"}
                 </span>
               </td>
             </tr>
