@@ -1,7 +1,7 @@
 # Backend Ops (Pi, systemd, quick tunnel)
 
 This setup keeps the API bound to `127.0.0.1:8000` and exposes it through a local Cloudflare quick tunnel service.
-The quick-tunnel unit is intentionally anti-thrash (`Restart=on-failure`, long restart delay, and start-limit controls) to avoid repeated 1015/429 rate limits.
+The quick-tunnel unit is intentionally anti-thrash (`Restart=on-failure`, delayed retries, and start-limit controls) to avoid repeated 1015/429 rate limits, but it now allows a few retries so one transient failure does not disable the tunnel for an hour.
 
 The systemd units are tracked in:
 - `backend/ops/systemd/waterstatus-api.service`
@@ -61,8 +61,21 @@ Both services should be active after reboot (`waterstatus-api`, `waterstatus-qui
 ## When tunnel URL changes (committee demo maintenance)
 
 - Run `bash backend/ops/print_tunnel_url.sh` to get the new `https://<...>.trycloudflare.com`
-- In Render (frontend static site), update env var `VITE_API_BASE` to that new URL
+- In Render (frontend static site), update env var `VITE_API_BASE_URL` to that new URL
+- `VITE_API_BASE` is accepted as a legacy alias by the frontend, but `VITE_API_BASE_URL` is the canonical name
 - Trigger a redeploy (prefer “clear build cache and deploy” if available)
+
+## If the quick tunnel URL itself returns 404
+
+- Check for an existing Cloudflare config file in `~/.cloudflared/config.yml`, `~/.cloudflared/config.yaml`, `/etc/cloudflared/config.yml`, or `/etc/cloudflared/config.yaml`
+- Cloudflare documents that TryCloudflare quick tunnels are not supported when a `config.yaml` file is present in the `.cloudflared` directory
+- If you already have a named tunnel config for `api.water-status.shop`, temporarily rename that config file, restart `waterstatus-quick-tunnel`, and fetch the newly issued `trycloudflare.com` URL again
+- Verify the new tunnel directly before updating Render:
+
+```bash
+curl -sS "$(bash backend/ops/print_tunnel_url.sh)/healthz"
+curl -sS "$(bash backend/ops/print_tunnel_url.sh)/sensors" | head
+```
 
 ## If quick tunnel is rate-limited (1015 / 429)
 
@@ -81,13 +94,13 @@ sudo systemctl start waterstatus-quick-tunnel
 
 ## Cloudflared binary path note
 
-If tunnel service fails to start because `cloudflared` is not at `/usr/bin/cloudflared`, run:
+If tunnel service fails to start because `cloudflared` is not on the default systemd path, run:
 
 ```bash
 command -v cloudflared
 ```
 
-Then update `ExecStart=` in `/etc/systemd/system/waterstatus-quick-tunnel.service` to the discovered path and run:
+The tracked unit now uses `/usr/bin/env cloudflared` with an explicit `PATH`, but if your installed unit is older, update it and run:
 
 ```bash
 sudo systemctl daemon-reload

@@ -405,9 +405,52 @@ async def _get_pg_pool() -> "asyncpg.Pool":
                 await conn.execute(
                     'ALTER TABLE "sensors" ADD COLUMN IF NOT EXISTS lon DOUBLE PRECISION'
                 )
+                await conn.execute(
+                    'CREATE INDEX IF NOT EXISTS sensor_readings_sensor_id_idx '
+                    'ON "sensor_readings" ((doc->>\'sensor_id\'))'
+                )
+                await conn.execute(
+                    'CREATE INDEX IF NOT EXISTS sensor_readings_timestamp_idx '
+                    'ON "sensor_readings" ((doc->>\'timestamp\'))'
+                )
             _pg_tables_ready = True
 
     return _pg_pool
+
+
+async def fetch_postgres_latest_sensor_readings() -> dict[str, dict[str, Any]]:
+    if not USE_POSTGRES:
+        raise RuntimeError("Postgres backend is not active")
+
+    pool = await _get_pg_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT DISTINCT ON ((doc->>'sensor_id'))
+                doc->>'sensor_id' AS sensor_id,
+                doc::text AS doc
+            FROM "sensor_readings"
+            WHERE COALESCE(doc->>'sensor_id', '') <> ''
+            ORDER BY
+                (doc->>'sensor_id'),
+                COALESCE(doc->>'timestamp', '') DESC,
+                _id DESC
+            """
+        )
+
+    latest_by_sensor: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        sensor_id = str(row["sensor_id"] or "").strip()
+        raw_doc = row["doc"]
+        if not sensor_id or raw_doc is None:
+            continue
+
+        if isinstance(raw_doc, str):
+            latest_by_sensor[sensor_id] = json.loads(raw_doc)
+        else:
+            latest_by_sensor[sensor_id] = json.loads(str(raw_doc))
+
+    return latest_by_sensor
 
 
 class PostgresCollection(_CollectionHelpers):

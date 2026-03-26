@@ -78,6 +78,7 @@ const previewSections = [
 ];
 
 const PREVIEW_REQUEST_TIMEOUT_MS = 4500;
+const FORECAST_REFRESH_INTERVAL_MS = 10_000;
 
 const fallbackPreviewItems: HomePreviewItem[] = [
   {
@@ -425,6 +426,7 @@ export default function Home() {
 
   useEffect(() => {
     let isMounted = true;
+    let requestInFlight = false;
     const sensorIds = forecastTargets.map((item) => item.id);
 
     if (isFallbackPreview || sensorIds.length === 0) {
@@ -434,6 +436,9 @@ export default function Home() {
     }
 
     async function loadForecasts() {
+      if (requestInFlight) return;
+      requestInFlight = true;
+
       try {
         setForecastLoading(true);
         const summaries = await fetchForecastSummaries(sensorIds);
@@ -449,22 +454,26 @@ export default function Home() {
           {}
         );
 
-        setForecastBySensorId(nextBySensorId);
+        setForecastBySensorId((current) => ({
+          ...current,
+          ...nextBySensorId,
+        }));
       } catch (error) {
         console.error(error);
-        if (!isMounted) return;
-        setForecastBySensorId({});
       } finally {
         if (isMounted) setForecastLoading(false);
+        requestInFlight = false;
       }
     }
 
     loadForecasts();
+    const refresh = window.setInterval(loadForecasts, FORECAST_REFRESH_INTERVAL_MS);
 
     return () => {
       isMounted = false;
+      window.clearInterval(refresh);
     };
-  }, [forecastTargetKey, forecastTargets, isFallbackPreview]);
+  }, [forecastTargetKey, isFallbackPreview]);
 
   const shouldShowForecastContext =
     !isFallbackPreview && forecastTargets.length > 0;
@@ -709,7 +718,7 @@ export default function Home() {
               </a>
             </div>
 
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className="grid gap-3 md:auto-rows-fr md:grid-cols-3">
               {forecastTargets.map((item) => {
                 const summary = forecastBySensorId[item.id];
                 const current = summary?.current;
@@ -724,7 +733,7 @@ export default function Home() {
                 return (
                   <div
                     key={`forecast-${item.id}`}
-                    className="ws-card ws-card-anim rounded-[1.4rem] border border-[var(--ws-border-subtle)] bg-white/72 p-4 shadow-[0_14px_28px_rgba(15,23,42,0.06)]"
+                    className="ws-card ws-card-anim flex h-full min-h-[18.75rem] flex-col rounded-[1.4rem] border border-[var(--ws-border-subtle)] bg-white/72 p-4 shadow-[0_14px_28px_rgba(15,23,42,0.06)]"
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
@@ -741,13 +750,37 @@ export default function Home() {
                     </div>
 
                     {forecastLoading && !summary ? (
-                      <div className="mt-4 space-y-2">
-                        <div className="ws-skeleton h-8 rounded-xl" />
-                        <div className="ws-skeleton h-16 rounded-xl" />
+                      <div className="mt-4 flex flex-1 flex-col">
+                        <div className="flex items-end justify-between gap-3">
+                          <div className="space-y-2">
+                            <div className="ws-skeleton h-10 w-28 rounded-xl" />
+                            <div className="ws-skeleton h-4 w-24 rounded-xl" />
+                          </div>
+                          <div className="space-y-2 text-right">
+                            <div className="ws-skeleton ml-auto h-4 w-20 rounded-xl" />
+                            <div className="ws-skeleton ml-auto h-4 w-16 rounded-xl" />
+                          </div>
+                        </div>
+
+                        <div className="mt-4 grid grid-cols-3 gap-2 text-[11px]">
+                          {Array.from({ length: 3 }).map((_, index) => (
+                            <div
+                              key={`forecast-skeleton-${item.id}-${index}`}
+                              className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-2"
+                            >
+                              <div className="ws-skeleton h-3 w-16 rounded-xl" />
+                              <div className="mt-2 ws-skeleton h-6 w-full rounded-xl" />
+                            </div>
+                          ))}
+                        </div>
+
+                        <div className="mt-auto pt-3">
+                          <div className="ws-skeleton h-3 w-24 rounded-xl" />
+                        </div>
                       </div>
                     ) : summary?.status === "ok" ? (
-                      <>
-                        <div className="mt-4 flex items-end justify-between gap-3">
+                      <div className="mt-4 flex flex-1 flex-col">
+                        <div className="flex items-end justify-between gap-3">
                           <div>
                             <p className="text-3xl font-semibold tracking-tight text-slate-900">
                               {formatTemperature(current?.temperature_2m)}
@@ -788,13 +821,15 @@ export default function Home() {
                           </div>
                         </div>
 
-                        <p className="mt-3 text-[10px] text-slate-500">
+                        <p className="mt-auto pt-3 text-[10px] text-slate-500">
                           Updated {formatShortDate(summary.generated_at || current?.time || null)}
                         </p>
-                      </>
+                      </div>
                     ) : (
-                      <div className="mt-4 rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3 text-xs text-slate-500">
-                        Forecast context is unavailable for this location right now.
+                      <div className="mt-4 flex flex-1 flex-col">
+                        <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3 text-xs text-slate-500">
+                          Forecast context is unavailable for this location right now.
+                        </div>
                       </div>
                     )}
                   </div>

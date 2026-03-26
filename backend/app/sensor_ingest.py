@@ -10,6 +10,8 @@ from datetime import datetime, timedelta, timezone
 from html import unescape
 from typing import Any, Tuple, List, Dict
 
+from .weather_context import get_forecast_summaries
+
 WATER_LEVEL_URL = (
     "https://publicinfobanjir.water.gov.my/aras-air/"
     "data-paras-air/aras-air-data/?state=SEL&district=ALL&station=ALL"
@@ -339,6 +341,24 @@ def build_sensor_readings(sensors: list[dict[str, Any]]) -> list[dict[str, Any]]
     now_utc = datetime.utcnow()
     now_local = now_utc + timedelta(hours=8)
     readings: list[dict[str, Any]] = []
+    temperature_forecasts_by_sensor_id: dict[str, dict[str, Any]] = {}
+
+    temperature_sensors = [
+        sensor
+        for sensor in sensors
+        if sensor.get("type") == "temperature"
+    ]
+    if temperature_sensors:
+        try:
+            forecast_summaries = get_forecast_summaries(temperature_sensors)
+            temperature_forecasts_by_sensor_id = {
+                str(summary.get("sensor_id")): summary
+                for summary in forecast_summaries
+                if summary.get("status") == "ok"
+                and summary.get("sensor_id") is not None
+            }
+        except Exception:
+            temperature_forecasts_by_sensor_id = {}
 
     for sensor in sensors:
         sensor_type = sensor.get("type")
@@ -354,7 +374,19 @@ def build_sensor_readings(sensors: list[dict[str, Any]]) -> list[dict[str, Any]]
                 source = external["source"]
 
         elif sensor_type == "temperature":
-            forecast_temp = _forecast_temperature_for_location(sensor.get("location", ""))
+            forecast_summary = temperature_forecasts_by_sensor_id.get(str(sensor.get("_id")))
+            if forecast_summary:
+                forecast_temp = _safe_float(
+                    (forecast_summary.get("current") or {}).get("temperature_2m")
+                )
+                if forecast_temp is not None:
+                    value = forecast_temp
+                    source = forecast_summary.get("source", "open-meteo.forecast")
+
+            if value is None:
+                forecast_temp = _forecast_temperature_for_location(sensor.get("location", ""))
+            else:
+                forecast_temp = None
             if forecast_temp is not None:
                 value = forecast_temp
                 source = "data.gov.my.weather_forecast"

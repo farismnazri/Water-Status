@@ -14,17 +14,26 @@ from uuid import uuid4
 from fastapi import FastAPI, HTTPException, Header
 from pydantic import BaseModel
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Callable
 from fastapi.middleware.cors import CORSMiddleware
 
 import stripe
 
-from .db import ACTIVE_BACKEND, db, ping_database
+from .db import (
+    ACTIVE_BACKEND,
+    db,
+    fetch_postgres_latest_sensor_readings,
+    ping_database,
+)
 from .models import UserReportCreate
 from .sensor_ingest import (
     build_sensor_readings,
     fetch_selangor_readings,
     fetch_selangor_water_level_history_for_sensor,
+)
+from .weather_context import (
+    OPEN_METEO_DEFAULT_BATCH_LIMIT,
+    get_forecast_summaries,
 )
 
 app = FastAPI()
@@ -33,6 +42,17 @@ logger = logging.getLogger("sensor-ingest")
 SENSOR_INGEST_INTERVAL_SECONDS = int(os.getenv("SENSOR_INGEST_INTERVAL_SECONDS", "600"))
 SENSOR_INGEST_ENABLED = os.getenv("SENSOR_INGEST_ENABLED", "1").lower() in {"1", "true", "yes"}
 _sensor_ingest_task: asyncio.Task | None = None
+HOME_PREVIEW_CACHE_TTL_SECONDS = 15
+_home_preview_cache: dict[str, Any] | None = None
+_home_preview_cache_expires_at = 0.0
+_home_preview_cache_lock: asyncio.Lock | None = None
+
+
+def _get_home_preview_cache_lock() -> asyncio.Lock:
+    global _home_preview_cache_lock
+    if _home_preview_cache_lock is None:
+        _home_preview_cache_lock = asyncio.Lock()
+    return _home_preview_cache_lock
 
 # Fallback sample sensors (used when persistent DB is unavailable)
 FALLBACK_SENSORS = [
@@ -139,6 +159,53 @@ def get_fallback_sensors_with_ids():
     return copy.deepcopy(_fallback_cached)
 
 _fallback_cached = None
+DEFAULT_TEMPERATURE_SENSORS = [
+    copy.deepcopy(sensor)
+    for sensor in FALLBACK_SENSORS
+    if sensor.get("type") == "temperature"
+]
+
+
+async def _ensure_default_temperature_sensors() -> int:
+    if not DEFAULT_TEMPERATURE_SENSORS:
+        return 0
+
+    existing_temperature = await db.sensors.find({"type": "temperature"}).to_list(length=1)
+    if existing_temperature:
+        return 0
+
+    inserted = 0
+    for sensor in DEFAULT_TEMPERATURE_SENSORS:
+        await db.sensors.insert_one(copy.deepcopy(sensor))
+        inserted += 1
+
+    if inserted:
+        logger.info("Inserted %s default temperature sensors", inserted)
+
+    return inserted
+
+
+async def _load_sensor_docs_or_fallback(query: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    try:
+        sensors: list[dict[str, Any]] = []
+        cursor = db.sensors.find(query or {})
+        async for sensor in cursor:
+            sensors.append(sensor)
+
+        if sensors and not any(sensor.get("type") == "temperature" for sensor in sensors):
+            inserted = await _ensure_default_temperature_sensors()
+            if inserted:
+                sensors = []
+                cursor = db.sensors.find(query or {})
+                async for sensor in cursor:
+                    sensors.append(sensor)
+    except Exception:
+        sensors = get_fallback_sensors_with_ids()
+    else:
+        if not sensors:
+            sensors = get_fallback_sensors_with_ids()
+
+    return sensors
 
 
 # --- Fallback user store when DB is unavailable ----------------------------
@@ -214,6 +281,7 @@ async def readyz():
 async def ingest_sensor_readings_once(trigger: str = "manual") -> dict:
     persist = True
     try:
+        await _ensure_default_temperature_sensors()
         sensors = await db.sensors.find({"is_active": True}).to_list(length=None)
     except Exception:
         sensors = get_fallback_sensors_with_ids()
@@ -227,17 +295,28 @@ async def ingest_sensor_readings_once(trigger: str = "manual") -> dict:
     except Exception as e:
         logger.warning("Selangor ingest failed: %s", e)
 
-    # 2) If nothing came in, fall back to existing scraping + simulation
-    if not generated:
-        if not sensors:
-            return {
-                "trigger": trigger,
-                "inserted_or_updated": 0,
-                "total_sensors": 0,
-                "message": "No active sensors found",
-                "persisted": False,
-            }
-        generated.extend(await asyncio.to_thread(build_sensor_readings, sensors))
+    if not sensors and not generated:
+        return {
+            "trigger": trigger,
+            "inserted_or_updated": 0,
+            "total_sensors": 0,
+            "message": "No active sensors found",
+            "persisted": False,
+        }
+
+    # 2) Backfill sensors not covered by the Selangor feed, including temperature.
+    official_sensor_ids = {
+        str(reading.get("sensor_id"))
+        for reading in generated
+        if reading.get("sensor_id") is not None
+    }
+    missing_sensors = [
+        sensor
+        for sensor in sensors
+        if sensor.get("_id") is not None and str(sensor.get("_id")) not in official_sensor_ids
+    ]
+    if missing_sensors:
+        generated.extend(await asyncio.to_thread(build_sensor_readings, missing_sensors))
 
     updated_count = 0
 
@@ -758,6 +837,156 @@ def _select_latest_reading_doc_for_sensor(readings: list[dict[str, Any]], sensor
     return max(candidates, key=_reading_sort_key)
 
 
+def _latest_readings_by_sensor_from_docs(
+    readings: list[dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    latest_by_sensor: dict[str, dict[str, Any]] = {}
+    for reading in readings:
+        sensor_id = _extract_sensor_id_from_reading(reading)
+        if sensor_id is None:
+            continue
+
+        previous = latest_by_sensor.get(sensor_id)
+        if previous is None or _reading_sort_key(reading) > _reading_sort_key(previous):
+            latest_by_sensor[sensor_id] = reading
+
+    return latest_by_sensor
+
+
+def _build_home_preview_item(
+    sensor: dict[str, Any],
+    latest_doc: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    normalized_sensor = _normalize_sensor_for_client(sensor)
+    sensor_type = normalized_sensor.get("type")
+    if sensor_type not in ALLOWED_SENSOR_TYPES:
+        return None
+
+    sensor_id = str(normalized_sensor.get("id") or "")
+    if not sensor_id:
+        return None
+
+    raw_timestamp = None
+    value = None
+    unit = normalized_sensor.get("unit")
+    source = "missing"
+
+    if latest_doc is not None:
+        raw_timestamp, _ = _extract_reading_timestamp(latest_doc)
+        value = latest_doc.get("value")
+        unit = latest_doc.get("unit") or unit
+        source = latest_doc.get("source", "unknown")
+
+    return {
+        "id": sensor_id,
+        "name": normalized_sensor.get("name"),
+        "location": normalized_sensor.get("location"),
+        "type": sensor_type,
+        "unit": unit,
+        "latitude": normalized_sensor.get("latitude"),
+        "longitude": normalized_sensor.get("longitude"),
+        "value": value,
+        "timestamp": _serialize_timestamp(raw_timestamp),
+        "source": source,
+    }
+
+
+def _build_home_preview_payload_from_sensor_docs(
+    sensors: list[dict[str, Any]],
+    latest_by_sensor: dict[str, dict[str, Any]],
+    generated_at: datetime | None = None,
+) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+    for sensor in sensors:
+        if sensor.get("is_active") is False:
+            continue
+
+        sensor_id = str(sensor.get("_id") or sensor.get("id") or "")
+        item = _build_home_preview_item(sensor, latest_by_sensor.get(sensor_id))
+        if item is not None:
+            items.append(item)
+
+    generated = generated_at or datetime.now(timezone.utc)
+    return {
+        "items": items,
+        "generated_at": _serialize_timestamp(generated),
+    }
+
+
+async def _load_home_preview_payload_uncached() -> dict[str, Any]:
+    sensors = await _load_sensor_docs_or_fallback({"is_active": True})
+
+    latest_by_sensor: dict[str, dict[str, Any]] = {}
+
+    if ACTIVE_BACKEND == "postgres":
+        try:
+            latest_by_sensor = await fetch_postgres_latest_sensor_readings()
+        except Exception:
+            latest_by_sensor = {}
+    else:
+        try:
+            all_readings = await db.sensor_readings.find().to_list(length=None)
+        except Exception:
+            all_readings = []
+
+        if all_readings:
+            latest_by_sensor = _latest_readings_by_sensor_from_docs(all_readings)
+        else:
+            generated_readings = await asyncio.to_thread(build_sensor_readings, sensors)
+            latest_by_sensor = {
+                str(reading["sensor_id"]): reading
+                for reading in generated_readings
+                if reading.get("sensor_id") is not None
+            }
+
+    missing_sensors = [
+        sensor
+        for sensor in sensors
+        if str(sensor.get("_id") or sensor.get("id") or "") not in latest_by_sensor
+    ]
+    if missing_sensors:
+        try:
+            generated_readings = await asyncio.to_thread(build_sensor_readings, missing_sensors)
+        except Exception:
+            generated_readings = []
+
+        for reading in generated_readings:
+            sensor_id = str(reading.get("sensor_id") or "")
+            if sensor_id:
+                latest_by_sensor.setdefault(sensor_id, reading)
+
+    return _build_home_preview_payload_from_sensor_docs(
+        sensors,
+        latest_by_sensor,
+    )
+
+
+async def _get_home_preview_payload(
+    monotonic_fn: Callable[[], float] = time.monotonic,
+) -> dict[str, Any]:
+    global _home_preview_cache, _home_preview_cache_expires_at
+
+    now = monotonic_fn()
+    if _home_preview_cache is not None and now < _home_preview_cache_expires_at:
+        return _home_preview_cache
+
+    async with _get_home_preview_cache_lock():
+        now = monotonic_fn()
+        if _home_preview_cache is not None and now < _home_preview_cache_expires_at:
+            return _home_preview_cache
+
+        payload = await _load_home_preview_payload_uncached()
+        _home_preview_cache = payload
+        _home_preview_cache_expires_at = now + HOME_PREVIEW_CACHE_TTL_SECONDS
+        return payload
+
+
+def _reset_home_preview_cache() -> None:
+    global _home_preview_cache, _home_preview_cache_expires_at
+    _home_preview_cache = None
+    _home_preview_cache_expires_at = 0.0
+
+
 async def _find_user_by_username(username: str) -> dict | None:
     try:
         doc = await db.users.find_one({"username": username})
@@ -961,21 +1190,95 @@ async def create_sensor(sensor: SensorCreate):
 @app.get("/sensors")
 async def list_sensors():
     sensors = []
-    try:
-        cursor = db.sensors.find()
-        async for doc in cursor:
-            sensors.append(_normalize_sensor_for_client(doc))
-    except Exception:
-        fallback = get_fallback_sensors_with_ids()
-        for s in fallback:
-            sensors.append(_normalize_sensor_for_client(s))
-    else:
-        if not sensors:
-            fallback = get_fallback_sensors_with_ids()
-            for s in fallback:
-                sensors.append(_normalize_sensor_for_client(s))
+    for doc in await _load_sensor_docs_or_fallback():
+        sensors.append(_normalize_sensor_for_client(doc))
 
     return {"sensors": sensors}
+
+
+@app.get("/home-preview")
+async def get_home_preview():
+    return await _get_home_preview_payload()
+
+@app.get("/weather/forecast-summaries")
+async def get_weather_forecast_summaries(sensor_ids: str = ""):
+    requested_ids = [item.strip() for item in sensor_ids.split(",") if item.strip()]
+    if not requested_ids:
+        return {"summaries": []}
+
+    if len(requested_ids) > OPEN_METEO_DEFAULT_BATCH_LIMIT:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Please request at most {OPEN_METEO_DEFAULT_BATCH_LIMIT} sensor IDs "
+                f"per call."
+            ),
+        )
+
+    sensors = await _load_sensor_docs_or_fallback()
+    sensors_by_id = {
+        str(sensor.get("_id") or sensor.get("id") or ""): sensor
+        for sensor in sensors
+    }
+
+    requested_sensors = [
+        sensors_by_id[sensor_id]
+        for sensor_id in requested_ids
+        if sensor_id in sensors_by_id
+    ]
+
+    fetched_by_id: dict[str, dict[str, Any]] = {}
+    if requested_sensors:
+        fetched = await asyncio.to_thread(get_forecast_summaries, requested_sensors)
+        fetched_by_id = {
+            str(summary.get("sensor_id") or ""): summary
+            for summary in fetched
+            if summary.get("sensor_id")
+        }
+
+    summaries = []
+    for sensor_id in requested_ids:
+        sensor = sensors_by_id.get(sensor_id)
+        if sensor is None:
+            summaries.append(
+                {
+                    "sensor_id": sensor_id,
+                    "location": None,
+                    "latitude": None,
+                    "longitude": None,
+                    "status": "unavailable",
+                    "source": "open-meteo.forecast",
+                    "generated_at": _serialize_timestamp(datetime.now(timezone.utc)),
+                    "current": None,
+                    "next_6h": None,
+                    "next_12h": None,
+                    "daily": [],
+                }
+            )
+            continue
+
+        summaries.append(
+            fetched_by_id.get(sensor_id)
+            or {
+                "sensor_id": sensor_id,
+                "location": sensor.get("location"),
+                "latitude": sensor.get("latitude") if sensor.get("latitude") is not None else sensor.get("lat"),
+                "longitude": (
+                    sensor.get("longitude")
+                    if sensor.get("longitude") is not None
+                    else sensor.get("lon", sensor.get("lng"))
+                ),
+                "status": "unavailable",
+                "source": "open-meteo.forecast",
+                "generated_at": _serialize_timestamp(datetime.now(timezone.utc)),
+                "current": None,
+                "next_6h": None,
+                "next_12h": None,
+                "daily": [],
+            }
+        )
+
+    return {"summaries": summaries}
 
 @app.get("/sensors/{sensor_id}")
 async def get_sensor(sensor_id: str):
@@ -1843,32 +2146,18 @@ async def get_latest_sensor_reading(sensor_id: str):
 @app.get("/sensor-readings/latest-by-sensor")
 async def get_latest_readings_for_all_sensors():
     latest_readings = []
-    sensors: list[dict] = []
+    sensors = await _load_sensor_docs_or_fallback()
     generated_fallback_by_sensor_id: dict[str, dict] | None = None
-
-    try:
-        cursor = db.sensors.find()
-        async for sensor in cursor:
-            sensors.append(sensor)
-    except Exception:
-        sensors = get_fallback_sensors_with_ids()
 
     latest_by_sensor: dict[str, dict[str, Any]] = {}
     try:
         all_readings = await db.sensor_readings.find().to_list(length=None)
         known_sensor_ids = {str(s.get("_id")) for s in sensors if s.get("_id") is not None}
-        for reading in all_readings:
-            sensor_id = _extract_sensor_id_from_reading(reading)
-            if sensor_id is None or sensor_id not in known_sensor_ids:
-                continue
-
-            previous = latest_by_sensor.get(sensor_id)
-            if previous is None:
-                latest_by_sensor[sensor_id] = reading
-                continue
-
-            if _reading_sort_key(reading) > _reading_sort_key(previous):
-                latest_by_sensor[sensor_id] = reading
+        latest_by_sensor = {
+            sensor_id: reading
+            for sensor_id, reading in _latest_readings_by_sensor_from_docs(all_readings).items()
+            if sensor_id in known_sensor_ids
+        }
     except Exception:
         latest_by_sensor = {}
 
