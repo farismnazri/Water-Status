@@ -1,9 +1,24 @@
 services:
   - type: web
+    name: water-status-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+
+  - type: web
     name: water-status
-    env: static
-    buildCommand: cd frontend && npm ci && npm run build
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
     staticPublishPath: frontend/build/client
+    envVars:
+      - key: VITE_API_BASE_URL
+        fromService:
+          name: water-status-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
     routes:
       - type: rewrite
         source: /*

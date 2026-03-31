@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
+from fastapi import HTTPException
+
 os.environ.setdefault("SENSOR_INGEST_ENABLED", "0")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -33,6 +35,12 @@ def make_forecast_payload(
         },
         "hourly": {
             "time": [
+                "2026-03-18T04:00",
+                "2026-03-18T05:00",
+                "2026-03-18T06:00",
+                "2026-03-18T07:00",
+                "2026-03-18T08:00",
+                "2026-03-18T09:00",
                 "2026-03-18T10:00",
                 "2026-03-18T11:00",
                 "2026-03-18T12:00",
@@ -40,15 +48,38 @@ def make_forecast_payload(
                 "2026-03-18T14:00",
                 "2026-03-18T15:00",
                 "2026-03-18T16:00",
-                "2026-03-18T17:00",
-                "2026-03-18T18:00",
-                "2026-03-18T19:00",
-                "2026-03-18T20:00",
-                "2026-03-18T21:00",
             ],
-            "precipitation_probability": [30, 40, 55, 70, 60, 20, 10, 0, 0, 5, 10, 15],
-            "rain": [0.0, 0.2, 0.4, 1.1, 0.8, 0.3, 0.0, 0.0, 0.0, 0.1, 0.1, 0.0],
-            "wind_speed_10m": [wind, wind + 2, wind + 4, wind + 5, wind + 3, wind + 1, wind, wind, wind, wind + 1, wind + 2, wind + 1],
+            "temperature_2m": [
+                temperature - 0.6,
+                temperature - 0.5,
+                temperature - 0.4,
+                temperature - 0.3,
+                temperature - 0.2,
+                temperature - 0.1,
+                temperature,
+                temperature + 0.2,
+                temperature + 0.3,
+                temperature + 0.4,
+                temperature + 0.1,
+                temperature - 0.1,
+                temperature - 0.2,
+            ],
+            "precipitation_probability": [10, 15, 20, 25, 30, 35, 30, 40, 55, 70, 60, 20, 10],
+            "precipitation": [0.0, 0.1, 0.2, 0.2, 0.1, 0.0, 0.0, 0.3, 0.7, 1.6, 1.1, 0.4, 0.1],
+            "rain": [0.0, 0.0, 0.1, 0.1, 0.0, 0.0, 0.0, 0.2, 0.4, 1.1, 0.8, 0.3, 0.0],
+            "wind_speed_10m": [wind - 1, wind, wind + 1, wind + 1, wind + 2, wind + 1, wind, wind + 2, wind + 4, wind + 5, wind + 3, wind + 1, wind],
+        },
+        "minutely_15": {
+            "time": [
+                "2026-03-18T10:00",
+                "2026-03-18T10:15",
+                "2026-03-18T10:30",
+                "2026-03-18T10:45",
+            ],
+            "temperature_2m": [temperature, temperature + 0.1, temperature + 0.2, temperature + 0.1],
+            "precipitation_probability": [30, 40, 55, 70],
+            "precipitation": [0.0, 0.3, 0.6, 1.4],
+            "rain": [0.0, 0.2, 0.4, 1.1],
         },
         "daily": {
             "time": ["2026-03-18", "2026-03-19", "2026-03-20"],
@@ -129,9 +160,17 @@ class FakeCollection:
         return SimpleNamespace(matched_count=0, modified_count=0)
 
 
+def make_request(client_ip: str = "198.51.100.10", forwarded_for: str | None = None):
+    headers = {}
+    if forwarded_for:
+        headers["x-forwarded-for"] = forwarded_for
+    return SimpleNamespace(headers=headers, client=SimpleNamespace(host=client_ip))
+
+
 class WeatherContextTests(unittest.TestCase):
     def setUp(self):
         weather_context._reset_forecast_cache()
+        main._reset_weather_rate_limit_state()
 
     def test_batches_nearby_coordinates_and_reuses_cache(self):
         sensors = [
@@ -157,7 +196,7 @@ class WeatherContextTests(unittest.TestCase):
 
         fetch_calls = []
 
-        def fake_fetch(coords):
+        def fake_fetch(coords, *_, **__):
             fetch_calls.append(coords)
             return [
                 make_forecast_payload(
@@ -217,10 +256,67 @@ class WeatherContextTests(unittest.TestCase):
         self.assertEqual(summaries[0]["status"], "error")
         self.assertIsNone(summaries[0]["current"])
 
+    def test_location_context_uses_raw_coordinates_and_builds_map_frames(self):
+        fetch_calls = []
+
+        def fake_fetch(coords, *_, **__):
+            fetch_calls.append(coords)
+            return [
+                make_forecast_payload(
+                    temperature=29.8 + index,
+                    apparent_temperature=33.0 + index,
+                    humidity=74,
+                    wind=10 + index,
+                    weather_code=61 if index % 2 == 0 else 2,
+                )
+                for index, _ in enumerate(coords)
+            ]
+
+        with patch.object(weather_context, "_fetch_open_meteo_payloads", side_effect=fake_fetch):
+            context = weather_context.get_location_forecast_context(3.1563, 101.7117, 8)
+
+        self.assertEqual(len(fetch_calls), 1)
+        self.assertEqual(len(fetch_calls[0]), 9)
+        self.assertEqual(context["status"], "ok")
+        self.assertEqual(len(context["next_hour_30m"]), 2)
+        self.assertEqual(len(context["hourly_timeline"]), 13)
+        self.assertEqual(context["hourly_timeline"][6]["offset_hours"], 0)
+        self.assertEqual(context["hourly_timeline"][6]["precipitation_amount"], 0.0)
+        self.assertEqual(len(context["map"]["samples"]), 9)
+        self.assertEqual(len(context["map"]["frames"]), 6)
+        self.assertEqual(context["map"]["frames"][0]["label"], "Now")
+        self.assertEqual(len(context["map"]["frames"][0]["samples"]), 9)
+
+    def test_location_context_reuses_cache_for_same_coordinates(self):
+        fetch_calls = []
+
+        def fake_fetch(coords, *_, **__):
+            fetch_calls.append(coords)
+            return [
+                make_forecast_payload(
+                    temperature=31.0 + index,
+                    apparent_temperature=34.0 + index,
+                    humidity=70,
+                    wind=9,
+                    weather_code=2,
+                )
+                for index, _ in enumerate(coords)
+            ]
+
+        with patch.object(weather_context, "_fetch_open_meteo_payloads", side_effect=fake_fetch):
+            first = weather_context.get_location_forecast_context(3.1563, 101.7117, 8)
+            second = weather_context.get_location_forecast_context(3.1563, 101.7117, 8)
+
+        self.assertEqual(len(fetch_calls), 1)
+        self.assertEqual(first["status"], "ok")
+        self.assertEqual(second["status"], "ok")
+        self.assertEqual(first["current"]["temperature_2m"], second["current"]["temperature_2m"])
+
 
 class SensorIngestTests(unittest.TestCase):
     def setUp(self):
         weather_context._reset_forecast_cache()
+        main._reset_weather_rate_limit_state()
 
     def test_temperature_fallback_prefers_open_meteo(self):
         sensor = {
@@ -262,6 +358,7 @@ class SensorIngestTests(unittest.TestCase):
 class ForecastEndpointTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         weather_context._reset_forecast_cache()
+        main._reset_weather_rate_limit_state()
 
     async def test_forecast_endpoint_keeps_requested_order_and_placeholders(self):
         fake_db = SimpleNamespace(
@@ -327,7 +424,10 @@ class ForecastEndpointTests(unittest.IsolatedAsyncioTestCase):
                 ],
             ),
         ):
-            payload = await main.get_weather_forecast_summaries("sensor-b,missing,sensor-a")
+            payload = await main.get_weather_forecast_summaries(
+                make_request(),
+                "sensor-b,missing,sensor-a",
+            )
 
         self.assertEqual(
             [item["sensor_id"] for item in payload["summaries"]],
@@ -336,6 +436,171 @@ class ForecastEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["summaries"][0]["status"], "ok")
         self.assertEqual(payload["summaries"][1]["status"], "unavailable")
         self.assertEqual(payload["summaries"][2]["current"]["temperature_2m"], 31.6)
+
+    async def test_location_context_endpoint_wraps_forecast_and_location_metadata(self):
+        with patch.object(
+            main,
+            "get_location_forecast_context",
+            return_value={
+                "status": "ok",
+                "source": "open-meteo.forecast",
+                "generated_at": "2026-03-18T10:00:00+00:00",
+                "current": {"temperature_2m": 30.2},
+                "next_6h": {"max_precipitation_probability": 65},
+                "daily": [],
+                "next_hour_30m": [
+                    {
+                        "start": "2026-03-18T10:00",
+                        "end": "2026-03-18T10:30",
+                        "rain_amount": 0.2,
+                        "precipitation_probability": 35,
+                    }
+                ],
+                "hourly_timeline": [
+                    {
+                        "time": "2026-03-18T10:00",
+                        "offset_hours": 0,
+                        "rain_amount": 0.2,
+                        "precipitation_amount": 0.3,
+                        "precipitation_probability": 35,
+                        "temperature_2m": 30.2,
+                    }
+                ],
+                "map": {
+                    "radius_km": 8,
+                    "samples": [{"id": "center", "latitude": 3.1563, "longitude": 101.7117}],
+                    "frames": [],
+                },
+            },
+        ), patch.object(
+            main,
+            "_load_sensor_docs_or_fallback",
+            return_value=[
+                {
+                    "_id": "sensor-a",
+                    "location": "KLCC",
+                    "latitude": 3.1563,
+                    "longitude": 101.7117,
+                }
+            ],
+        ):
+            payload = await main.get_weather_location_context(
+                request=make_request(),
+                latitude=3.1563,
+                longitude=101.7117,
+                radius_km=8,
+                label=None,
+                mode="gps",
+            )
+
+        self.assertEqual(payload["status"], "ok")
+        self.assertEqual(payload["location"]["label"], "KLCC")
+        self.assertEqual(payload["location"]["mode"], "gps")
+        self.assertEqual(payload["current"]["temperature_2m"], 30.2)
+        self.assertEqual(payload["map"]["radius_km"], 8)
+
+    async def test_location_context_endpoint_returns_429_after_limit(self):
+        request = make_request("203.0.113.5")
+        context_payload = {
+            "status": "ok",
+            "source": "open-meteo.forecast",
+            "generated_at": "2026-03-18T10:00:00+00:00",
+            "current": {"temperature_2m": 30.2},
+            "next_6h": {"max_precipitation_probability": 65},
+            "daily": [],
+            "next_hour_30m": [],
+            "hourly_timeline": [],
+            "map": {"radius_km": 8, "samples": [], "frames": []},
+        }
+
+        with (
+            patch.object(main.time, "monotonic", return_value=1_000.0),
+            patch.object(main, "_load_sensor_docs_or_fallback", return_value=[]),
+            patch.object(main, "get_location_forecast_context", return_value=context_payload),
+        ):
+            for _ in range(main.WEATHER_RATE_LIMITS["location-context"]):
+                payload = await main.get_weather_location_context(
+                    request=request,
+                    latitude=3.1563,
+                    longitude=101.7117,
+                    radius_km=8,
+                    label="KLCC",
+                    mode="gps",
+                )
+                self.assertEqual(payload["status"], "ok")
+
+            with self.assertRaises(HTTPException) as raised:
+                await main.get_weather_location_context(
+                    request=request,
+                    latitude=3.1563,
+                    longitude=101.7117,
+                    radius_km=8,
+                    label="KLCC",
+                    mode="gps",
+                )
+
+        self.assertEqual(raised.exception.status_code, 429)
+        self.assertEqual(raised.exception.headers["Retry-After"], "300")
+        self.assertEqual(raised.exception.detail["retry_after_seconds"], 300)
+
+    async def test_forecast_summaries_endpoint_returns_429_after_limit(self):
+        fake_db = SimpleNamespace(
+            sensors=FakeCollection(
+                [
+                    {
+                        "_id": "sensor-a",
+                        "name": "KLCC Temp",
+                        "type": "temperature",
+                        "location": "KLCC",
+                        "unit": "C",
+                        "latitude": 3.1563,
+                        "longitude": 101.7117,
+                        "is_active": True,
+                    }
+                ]
+            ),
+            sensor_readings=FakeCollection([]),
+        )
+
+        with (
+            patch.object(main.time, "monotonic", return_value=2_000.0),
+            patch.object(main, "db", fake_db),
+            patch.object(
+                main,
+                "get_forecast_summaries",
+                return_value=[
+                    {
+                        "sensor_id": "sensor-a",
+                        "location": "KLCC",
+                        "latitude": 3.1563,
+                        "longitude": 101.7117,
+                        "status": "ok",
+                        "source": "open-meteo.forecast",
+                        "generated_at": "2026-03-18T10:00:00+00:00",
+                        "current": {"temperature_2m": 31.6},
+                        "next_6h": {"max_precipitation_probability": 70},
+                        "next_12h": {"max_precipitation_probability": 80},
+                        "daily": [],
+                    }
+                ],
+            ),
+        ):
+            for _ in range(main.WEATHER_RATE_LIMITS["forecast-summaries"]):
+                payload = await main.get_weather_forecast_summaries(
+                    make_request("203.0.113.6"),
+                    "sensor-a",
+                )
+                self.assertEqual(payload["summaries"][0]["status"], "ok")
+
+            with self.assertRaises(HTTPException) as raised:
+                await main.get_weather_forecast_summaries(
+                    make_request("203.0.113.6"),
+                    "sensor-a",
+                )
+
+        self.assertEqual(raised.exception.status_code, 429)
+        self.assertEqual(raised.exception.headers["Retry-After"], "300")
+        self.assertEqual(raised.exception.detail["retry_after_seconds"], 300)
 
 
 if __name__ == "__main__":

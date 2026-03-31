@@ -20,6 +20,7 @@ export function MobileLocationForecastMap({
   isClient,
   loading,
   error,
+  staticFallback = false,
   onInteract,
 }: {
   center: { latitude: number; longitude: number };
@@ -30,9 +31,10 @@ export function MobileLocationForecastMap({
   isClient: boolean;
   loading: boolean;
   error: string | null;
+  staticFallback?: boolean;
   onInteract?: () => void;
 }) {
-  const hasFrame = Boolean(frame && samples.length > 0);
+  const hasMap = staticFallback || Boolean(frame && samples.length > 0);
 
   return (
     <div
@@ -43,10 +45,18 @@ export function MobileLocationForecastMap({
       <div className="flex items-center justify-between gap-3 border-b border-[var(--ws-border-subtle)] px-4 py-3">
         <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
           <MapPin className="h-3.5 w-3.5 text-[var(--ws-accent)]" />
-          <span>Local {layer === "precipitation" ? "precipitation" : "temperature"} map</span>
+          <span>
+            {staticFallback
+              ? "Local area map"
+              : `Local ${layer === "precipitation" ? "precipitation" : "temperature"} map`}
+          </span>
         </div>
 
-        {frame ? (
+        {staticFallback ? (
+          <span className="rounded-full border border-sky-200/80 bg-sky-50/80 px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-sky-700">
+            Static map
+          </span>
+        ) : frame ? (
           <span className="rounded-full border border-slate-200/70 bg-white/75 px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
             {frame.label}
           </span>
@@ -54,14 +64,15 @@ export function MobileLocationForecastMap({
       </div>
 
       <div className="relative h-[18rem] bg-white/45">
-        {isClient && hasFrame ? (
+        {isClient && hasMap ? (
           <Suspense fallback={null}>
             <LazyMobileLocationForecastLeafletMap
               center={center}
               radiusKm={radiusKm}
               samples={samples}
-              frame={frame!}
+              frame={frame}
               layer={layer}
+              staticFallback={staticFallback}
             />
           </Suspense>
         ) : (
@@ -73,7 +84,9 @@ export function MobileLocationForecastMap({
               <p className="text-xs text-slate-600">
                 {error
                   ? error
-                  : "We’re preparing a wider local forecast field around your selected area."}
+                  : staticFallback
+                    ? "We’re preparing a static local map around your selected area."
+                    : "We’re preparing a wider local forecast field around your selected area."}
               </p>
             </div>
           </div>

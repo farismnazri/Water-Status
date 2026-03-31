@@ -9,12 +9,13 @@ import os
 import copy
 import re
 import time
+from collections import deque
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Request
 from pydantic import BaseModel
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional, List, Callable
+from typing import Any, Optional, List, Callable, Literal
 from fastapi.middleware.cors import CORSMiddleware
 
 import stripe
@@ -34,6 +35,7 @@ from .sensor_ingest import (
 from .weather_context import (
     OPEN_METEO_DEFAULT_BATCH_LIMIT,
     get_forecast_summaries,
+    get_location_forecast_context,
 )
 
 app = FastAPI()
@@ -46,6 +48,13 @@ HOME_PREVIEW_CACHE_TTL_SECONDS = 15
 _home_preview_cache: dict[str, Any] | None = None
 _home_preview_cache_expires_at = 0.0
 _home_preview_cache_lock: asyncio.Lock | None = None
+WEATHER_RATE_LIMIT_WINDOW_SECONDS = 5 * 60
+WEATHER_RATE_LIMITS: dict[str, int] = {
+    "forecast-summaries": 60,
+    "location-context": 30,
+}
+_weather_rate_limit_lock: asyncio.Lock | None = None
+_weather_rate_limit_hits: dict[str, deque[float]] = {}
 
 
 def _get_home_preview_cache_lock() -> asyncio.Lock:
@@ -53,6 +62,68 @@ def _get_home_preview_cache_lock() -> asyncio.Lock:
     if _home_preview_cache_lock is None:
         _home_preview_cache_lock = asyncio.Lock()
     return _home_preview_cache_lock
+
+
+def _get_weather_rate_limit_lock() -> asyncio.Lock:
+    global _weather_rate_limit_lock
+    if _weather_rate_limit_lock is None:
+        _weather_rate_limit_lock = asyncio.Lock()
+    return _weather_rate_limit_lock
+
+
+def _extract_client_ip(request: Request) -> str:
+    forwarded_for = request.headers.get("x-forwarded-for", "")
+    if forwarded_for:
+        forwarded_ip = forwarded_for.split(",")[0].strip()
+        if forwarded_ip:
+            return forwarded_ip
+
+    client_host = getattr(request.client, "host", None)
+    return client_host or "unknown"
+
+
+async def _enforce_weather_rate_limit(
+    request: Request,
+    scope: Literal["forecast-summaries", "location-context"],
+) -> None:
+    now = time.monotonic()
+    cutoff = now - WEATHER_RATE_LIMIT_WINDOW_SECONDS
+    request_limit = WEATHER_RATE_LIMITS[scope]
+    request_key = f"{scope}:{_extract_client_ip(request)}"
+
+    # Keep the in-memory limiter bounded by evicting expired request timestamps.
+    async with _get_weather_rate_limit_lock():
+        expired_keys: list[str] = []
+        for key, timestamps in _weather_rate_limit_hits.items():
+            while timestamps and timestamps[0] <= cutoff:
+                timestamps.popleft()
+            if not timestamps:
+                expired_keys.append(key)
+
+        for key in expired_keys:
+            _weather_rate_limit_hits.pop(key, None)
+
+        timestamps = _weather_rate_limit_hits.setdefault(request_key, deque())
+        if len(timestamps) >= request_limit:
+            retry_after_seconds = max(
+                1,
+                math.ceil(WEATHER_RATE_LIMIT_WINDOW_SECONDS - (now - timestamps[0])),
+            )
+            raise HTTPException(
+                status_code=429,
+                detail={
+                    "message": "Forecast is temporarily rate-limited. Try again shortly.",
+                    "retry_after_seconds": retry_after_seconds,
+                    "scope": scope,
+                },
+                headers={"Retry-After": str(retry_after_seconds)},
+            )
+
+        timestamps.append(now)
+
+
+def _reset_weather_rate_limit_state() -> None:
+    _weather_rate_limit_hits.clear()
 
 # Fallback sample sensors (used when persistent DB is unavailable)
 FALLBACK_SENSORS = [
@@ -742,6 +813,37 @@ def _normalize_sensor_for_client(doc: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _nearest_location_label(
+    latitude: float,
+    longitude: float,
+    sensors: list[dict[str, Any]],
+) -> str | None:
+    closest_label: str | None = None
+    closest_distance: float | None = None
+
+    for sensor in sensors:
+        location = str(sensor.get("location") or "").strip()
+        if not location:
+            continue
+
+        sensor_lat, sensor_lon = _extract_sensor_coords(sensor)
+        if sensor_lat is None or sensor_lon is None:
+            continue
+
+        lat_delta = sensor_lat - latitude
+        lon_delta = sensor_lon - longitude
+        distance_sq = (lat_delta * lat_delta) + (lon_delta * lon_delta)
+        if closest_distance is None or distance_sq < closest_distance:
+            closest_distance = distance_sq
+            closest_label = location
+
+    return closest_label
+
+
+def _normalize_location_mode(mode: str | None) -> str:
+    return "manual" if str(mode or "").strip().lower() == "manual" else "gps"
+
+
 def _extract_sensor_id_from_reading(doc: dict[str, Any]) -> str | None:
     for key in READING_SENSOR_ID_KEYS:
         value = doc.get(key)
@@ -1201,7 +1303,9 @@ async def get_home_preview():
     return await _get_home_preview_payload()
 
 @app.get("/weather/forecast-summaries")
-async def get_weather_forecast_summaries(sensor_ids: str = ""):
+async def get_weather_forecast_summaries(request: Request, sensor_ids: str = ""):
+    await _enforce_weather_rate_limit(request, "forecast-summaries")
+
     requested_ids = [item.strip() for item in sensor_ids.split(",") if item.strip()]
     if not requested_ids:
         return {"summaries": []}
@@ -1279,6 +1383,49 @@ async def get_weather_forecast_summaries(sensor_ids: str = ""):
         )
 
     return {"summaries": summaries}
+
+
+@app.get("/weather/location-context")
+async def get_weather_location_context(
+    request: Request,
+    latitude: float,
+    longitude: float,
+    radius_km: float = 8,
+    label: str | None = None,
+    mode: str = "gps",
+):
+    await _enforce_weather_rate_limit(request, "location-context")
+
+    if not math.isfinite(latitude) or not math.isfinite(longitude):
+        raise HTTPException(status_code=400, detail="Latitude and longitude must be valid numbers.")
+
+    if latitude < -90 or latitude > 90 or longitude < -180 or longitude > 180:
+        raise HTTPException(status_code=400, detail="Latitude or longitude is out of range.")
+
+    if not math.isfinite(radius_km) or radius_km <= 0:
+        raise HTTPException(status_code=400, detail="radius_km must be greater than 0.")
+
+    sensors = await _load_sensor_docs_or_fallback()
+    normalized_label = str(label or "").strip()
+    if not normalized_label:
+        normalized_label = (
+            _nearest_location_label(latitude, longitude, sensors)
+            or f"{latitude:.3f}, {longitude:.3f}"
+        )
+
+    context = await asyncio.to_thread(
+        get_location_forecast_context,
+        latitude,
+        longitude,
+        radius_km,
+    )
+    context["location"] = {
+        "label": normalized_label,
+        "latitude": latitude,
+        "longitude": longitude,
+        "mode": _normalize_location_mode(mode),
+    }
+    return context
 
 @app.get("/sensors/{sensor_id}")
 async def get_sensor(sensor_id: str):
