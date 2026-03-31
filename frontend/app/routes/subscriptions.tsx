@@ -13,14 +13,16 @@ export default function SubscriptionsPage() {
   return (
     <main className="min-h-screen">
       <section className="max-w-3xl mx-auto px-4 py-10 space-y-4">
-        <h1 className="text-2xl font-semibold">Subscriptions moved</h1>
-        <p className="text-sm text-slate-600">
-          Subscription plans now live under the{" "}
-          <Link to="/products" className="text-sky-600 underline">
-            Products
-          </Link>{" "}
-          page.
-        </p>
+        <div className="ws-card p-6 space-y-3">
+          <h1 className="text-2xl font-semibold">Subscriptions moved</h1>
+          <p className="text-sm text-slate-600">
+            Subscription plans now live under the{" "}
+            <Link to="/products" className="text-sky-600 underline">
+              Products
+            </Link>{" "}
+            page.
+          </p>
+        </div>
       </section>
     </main>
   );

@@ -15,6 +15,8 @@ import { useEffect, useState } from "react";
 
 import type { Route } from "./+types/root";
 import "./app.css";
+import { MobileNavDrawer } from "./components/MobileNavDrawer";
+import { useMediaQuery } from "./lib/useMediaQuery";
 
 // --- Cart helpers (client-side only) ---
 const ACTIVE_USER_KEY = "wsActiveUser";
@@ -65,6 +67,23 @@ export const links: Route.LinksFunction = () => [
   },
 ];
 
+function CartButton({ cartCount }: { cartCount: number }) {
+  return (
+    <Link
+      to="/cart"
+      aria-label="View cart"
+      className="relative inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] transition hover:bg-[var(--ws-accent-alt)]/70"
+    >
+      <ShoppingCart className="h-4 w-4 text-slate-700" />
+      {cartCount > 0 && (
+        <span className="absolute -right-1 -top-1 min-w-[1.1rem] rounded-full bg-emerald-500 px-1 text-center text-[10px] font-semibold text-white">
+          {cartCount}
+        </span>
+      )}
+    </Link>
+  );
+}
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const navItems = [
     { to: "/", label: "Home" },
@@ -76,6 +95,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
     ];
 
     const [cartCount, setCartCount] = useState(0);
+    const [mobileNavOpen, setMobileNavOpen] = useState(false);
+    const hasDesktopNav = useMediaQuery("(min-width: 1024px)");
 
 const [activeUser, setActiveUser] = useState<{
   id: string | null;
@@ -176,6 +197,12 @@ const storageHandler = (e: StorageEvent) => {
   };
 }, []);
 
+useEffect(() => {
+  if (hasDesktopNav) {
+    setMobileNavOpen(false);
+  }
+}, [hasDesktopNav]);
+
   return (
     <html lang="en">
       <head>
@@ -188,7 +215,7 @@ const storageHandler = (e: StorageEvent) => {
         <div className="relative">
           {/* Top nav */}
           <header className="border-b border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)]/95 backdrop-blur">
-            <div className="max-w-6xl mx-auto flex items-center justify-between px-4 py-3">
+            <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
               {/* Left: logo */}
               <Link to="/" className="flex items-center gap-2">
                 <span className="ws-logo-circle inline-flex h-7 w-7 items-center justify-center text-sm font-bold">
@@ -199,9 +226,9 @@ const storageHandler = (e: StorageEvent) => {
                 </span>
               </Link>
 
-              {/* Right: nav + cart + active user */}
-              <div className="flex items-center gap-4">
-                <nav className="flex gap-1 text-xs sm:text-sm">
+              {/* Desktop nav */}
+              <div className="hidden items-center gap-4 lg:flex">
+                <nav className="flex gap-1 text-sm">
                   {navItems.map((item) => (
                     <NavLink
                       key={item.to}
@@ -222,19 +249,7 @@ const storageHandler = (e: StorageEvent) => {
                   ))}
                 </nav>
 
-                {/* Cart icon */}
-                <Link
-                  to="/cart"
-                  aria-label="View cart"
-                  className="relative inline-flex h-8 w-8 items-center justify-center rounded-full border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] hover:bg-[var(--ws-accent-alt)]/70 transition"
-                >
-                  <ShoppingCart className="h-4 w-4 text-slate-700" />
-                  {cartCount > 0 && (
-                    <span className="absolute -top-1 -right-1 min-w-[1.1rem] px-1 rounded-full bg-emerald-500 text-[10px] font-semibold text-white text-center">
-                      {cartCount}
-                    </span>
-                  )}
-                </Link>
+                <CartButton cartCount={cartCount} />
 
                 {/* Active user pill */}
                 <div className="flex flex-col items-end text-[11px] leading-tight">
@@ -245,6 +260,18 @@ const storageHandler = (e: StorageEvent) => {
                     {activeUser.plan ? `${activeUser.plan} plan` : "Guest"}
                   </span>
                 </div>
+              </div>
+
+              {/* Mobile nav */}
+              <div className="flex items-center gap-2 lg:hidden">
+                <CartButton cartCount={cartCount} />
+                <MobileNavDrawer
+                  activeUser={activeUser}
+                  cartCount={cartCount}
+                  navItems={navItems}
+                  open={mobileNavOpen}
+                  setOpen={setMobileNavOpen}
+                />
               </div>
             </div>
           </header>

@@ -26,7 +26,7 @@ import { API_BASE } from "../lib/api";
 import {
   fetchForecastSummaries,
   formatPercent,
-  formatRainAmount,
+  formatPrecipAmount,
   formatShortDate,
   formatTemperature,
   formatWind,
@@ -42,7 +42,7 @@ export function meta({}: Route.MetaArgs) {
     {
       name: "description",
       content:
-        "See rain, river level and temperature station updates around Klang Valley.",
+        "See precipitation, river level and temperature station updates around Klang Valley.",
     },
   ];
 }
@@ -73,7 +73,7 @@ const STATIONS_REQUEST_TIMEOUT_MS = 4500;
 const fallbackSensors: Sensor[] = [
   {
     id: "demo-rain-1",
-    name: "KLCC Rain Gauge",
+    name: "KLCC Precip Gauge",
     type: "rain",
     location: "Kuala Lumpur City Centre",
     unit: "mm/h",
@@ -83,7 +83,7 @@ const fallbackSensors: Sensor[] = [
   },
   {
     id: "demo-rain-2",
-    name: "Batu Caves Rain Gauge",
+    name: "Batu Caves Precip Gauge",
     type: "rain",
     location: "Batu Caves",
     unit: "mm/h",
@@ -93,7 +93,7 @@ const fallbackSensors: Sensor[] = [
   },
   {
     id: "demo-rain-3",
-    name: "Putrajaya Rain Gauge",
+    name: "Putrajaya Precip Gauge",
     type: "rain",
     location: "Presint 9, Putrajaya",
     unit: "mm/h",
@@ -638,13 +638,13 @@ export default function SensorsPage() {
 
   const filterChips: { key: FilterKey; label: string; count?: number }[] = [
     { key: "all", label: "All stations", count: sensors.length },
-    { key: "rain", label: "Rain", count: counts.rain },
+    { key: "rain", label: "Precip", count: counts.rain },
     { key: "water_level", label: "River level", count: counts.water_level },
     { key: "temperature", label: "Temperature", count: counts.temperature },
   ];
 
   const typeLabel = (t: Sensor["type"]) =>
-    t === "rain" ? "Rain" : t === "water_level" ? "River level" : "Temperature";
+    t === "rain" ? "Precip" : t === "water_level" ? "River level" : "Temperature";
 
   const TypeIcon = ({ type }: { type: Sensor["type"] }) => {
     if (type === "rain")
@@ -692,6 +692,33 @@ export default function SensorsPage() {
     return ts.toLocaleString();
   };
 
+  const getStatusMeta = (sensor: Sensor) => {
+    const isFallbackRow =
+      isFallbackData && latestReadingsBySensor[sensor.id]?.source === "fallback";
+
+    if (isFallbackRow) {
+      return {
+        label: "Fallback",
+        className: "bg-sky-50 text-sky-700 border-sky-200",
+        dotClassName: "bg-sky-500",
+      };
+    }
+
+    if (sensor.is_active) {
+      return {
+        label: "Active",
+        className: "bg-emerald-50 text-emerald-700 border-emerald-200",
+        dotClassName: "bg-emerald-500",
+      };
+    }
+
+    return {
+      label: "Offline",
+      className: "bg-slate-100 text-slate-500 border-slate-200",
+      dotClassName: "bg-slate-400",
+    };
+  };
+
   // Helper for showing filter text
   const filterLabel = () => {
     const typeText =
@@ -706,17 +733,17 @@ export default function SensorsPage() {
 
   return (
     <main className="min-h-screen">
-      <section className="max-w-5xl mx-auto px-4 py-10 space-y-6">
+      <section className="max-w-5xl mx-auto px-4 py-6 space-y-5 sm:py-10 sm:space-y-6">
         {/* Hero / intro */}
-        <div className="ws-card ws-hero-glow p-6 sm:p-7 flex flex-col gap-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="ws-card ws-hero-glow flex flex-col gap-4 p-5 sm:p-7">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
             <div>
               <p className="text-xs uppercase tracking-wide text-slate-500">
                 Stations · Klang Valley
               </p>
               <h1 className="text-2xl sm:text-3xl font-semibold leading-tight tracking-tight mt-1">
                 Live-style view of{" "}
-                <span className="text-sky-600">rain</span>,{" "}
+                <span className="text-sky-600">precip</span>,{" "}
                 <span className="text-emerald-600">river</span> &{" "}
                 <span className="text-rose-500">heat</span>.
               </h1>
@@ -728,13 +755,13 @@ export default function SensorsPage() {
               </p>
             </div>
 
-            <div className="rounded-xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-4 py-3 text-xs text-slate-600 shadow-sm min-w-[12rem]">
+            <div className="ws-card-panel w-full rounded-xl px-4 py-3 text-xs text-slate-600 sm:w-auto sm:min-w-[12rem]">
               <p className="font-semibold mb-1">Station summary</p>
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between">
                   <span className="inline-flex items-center gap-1 text-slate-600">
                     <span className="h-1.5 w-1.5 rounded-full bg-sky-400" />
-                    Rain
+                    Precip
                   </span>
                   <span className="font-medium">{counts.rain}</span>
                 </div>
@@ -781,7 +808,7 @@ export default function SensorsPage() {
                     "inline-flex items-center gap-2 rounded-full border text-xs px-3 py-1.5 transition",
                     isActive
                       ? "bg-sky-500 text-white border-sky-500 shadow-sm"
-                      : "bg-[var(--ws-bg-elevated)] text-slate-700 border-[var(--ws-border-subtle)] hover:bg-sky-50",
+                      : "ws-card-pill text-slate-700",
                   ].join(" ")}
                 >
                   <span>{chip.label}</span>
@@ -844,13 +871,13 @@ export default function SensorsPage() {
             "inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 transition",
             showRainLayer
               ? "bg-sky-100 text-sky-700 border-sky-300"
-              : "bg-[var(--ws-bg-elevated)] text-slate-600 border-[var(--ws-border-subtle)]",
+              : "ws-card-pill text-slate-600",
           ].join(" ")}
         >
           <Droplets className="h-3.5 w-3.5" />
-          {showRainLayer ? "Rain layer on" : "Rain layer off"}
+          {showRainLayer ? "Precip layer on" : "Precip layer off"}
         </button>
-        <span className="text-slate-500">Darker blue = heavier rain</span>
+        <span className="text-slate-500">Darker blue = heavier precip</span>
       </div>
     )}
   </div>
@@ -905,7 +932,7 @@ export default function SensorsPage() {
                   <Tooltip direction="top" offset={[0, -2]} opacity={1}>
                     <div className="text-[11px]">
                       <div className="font-semibold">{cell.stationName}</div>
-                      <div className="text-slate-600">Rain: {cell.value} mm/h</div>
+                      <div className="text-slate-600">Precip: {cell.value} mm/h</div>
                     </div>
                   </Tooltip>
                 </Circle>
@@ -963,7 +990,7 @@ export default function SensorsPage() {
                   <div className="text-slate-600">{marker.sensor.location}</div>
                   <div className="text-slate-500">
                     {marker.sensor.type === "rain"
-                      ? "Rain station"
+                      ? "Precip station"
                       : marker.sensor.type === "water_level"
                       ? "River level"
                       : "Temperature"}
@@ -979,7 +1006,7 @@ export default function SensorsPage() {
 </div>
 
 <div className="ws-card overflow-hidden p-4 sm:p-5">
-  <div className="flex flex-wrap items-start justify-between gap-3">
+  <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-between">
     <div className="min-w-0">
       <p className="text-xs uppercase tracking-wide text-slate-500">
         Selected station forecast
@@ -1021,14 +1048,14 @@ export default function SensorsPage() {
       return automatically when the station server reconnects.
     </div>
   ) : forecastLoading && !selectedForecast ? (
-    <div className="mt-4 grid gap-3 lg:grid-cols-[1.2fr_0.8fr]">
+    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[1.2fr_0.8fr]">
       <div className="ws-skeleton h-32 rounded-2xl" />
       <div className="ws-skeleton h-32 rounded-2xl" />
     </div>
   ) : selectedForecast?.status === "ok" ? (
     <>
       <div className="mt-4 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-        <div className="rounded-2xl border border-slate-200/80 bg-white/78 p-4">
+        <div className="ws-card-panel rounded-2xl p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
               <p className="text-sm font-semibold text-slate-800">
@@ -1052,26 +1079,26 @@ export default function SensorsPage() {
             </span>
           </div>
 
-          <div className="mt-4 grid gap-3 sm:grid-cols-4">
-            <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="ws-card-panel-soft rounded-xl px-3 py-3">
               <p className="text-[11px] text-slate-500">Temperature</p>
               <p className="mt-1 text-xl font-semibold text-slate-900">
                 {formatTemperature(selectedForecast.current?.temperature_2m)}
               </p>
             </div>
-            <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
+            <div className="ws-card-panel-soft rounded-xl px-3 py-3">
               <p className="text-[11px] text-slate-500">Feels like</p>
               <p className="mt-1 text-lg font-semibold text-slate-900">
                 {formatTemperature(selectedForecast.current?.apparent_temperature)}
               </p>
             </div>
-            <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
+            <div className="ws-card-panel-soft rounded-xl px-3 py-3">
               <p className="text-[11px] text-slate-500">Humidity</p>
               <p className="mt-1 text-lg font-semibold text-slate-900">
                 {formatPercent(selectedForecast.current?.relative_humidity_2m)}
               </p>
             </div>
-            <div className="rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
+            <div className="ws-card-panel-soft rounded-xl px-3 py-3">
               <p className="text-[11px] text-slate-500">Wind</p>
               <p className="mt-1 text-lg font-semibold text-slate-900">
                 {formatWind(selectedForecast.current?.wind_speed_10m)}
@@ -1080,22 +1107,22 @@ export default function SensorsPage() {
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200/80 bg-white/78 p-4">
+        <div className="ws-card-panel rounded-2xl p-4">
           <p className="text-sm font-semibold text-slate-800">Next 12 hours</p>
           <div className="mt-4 space-y-3 text-sm">
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
-              <span className="text-slate-500">Max rain chance</span>
+            <div className="ws-card-panel-soft flex items-center justify-between gap-3 rounded-xl px-3 py-3">
+              <span className="text-slate-500">Max precip chance</span>
               <span className="font-semibold text-slate-900">
                 {formatPercent(selectedForecast.next_12h?.max_precipitation_probability)}
               </span>
             </div>
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
-              <span className="text-slate-500">Rain sum</span>
+            <div className="ws-card-panel-soft flex items-center justify-between gap-3 rounded-xl px-3 py-3">
+              <span className="text-slate-500">Precip sum</span>
               <span className="font-semibold text-slate-900">
-                {formatRainAmount(selectedForecast.next_12h?.rain_sum)}
+                {formatPrecipAmount(selectedForecast.next_12h?.rain_sum)}
               </span>
             </div>
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200/80 bg-slate-50/80 px-3 py-3">
+            <div className="ws-card-panel-soft flex items-center justify-between gap-3 rounded-xl px-3 py-3">
               <span className="text-slate-500">Max wind</span>
               <span className="font-semibold text-slate-900">
                 {formatWind(selectedForecast.next_12h?.max_wind_speed_10m)}
@@ -1113,7 +1140,7 @@ export default function SensorsPage() {
           </p>
         </div>
 
-        <div className="mt-3 grid gap-3 md:grid-cols-3">
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 md:grid-cols-3">
           {(selectedForecast.daily ?? []).slice(0, 3).map((day: any) => {
             const meta = getWeatherCodeMeta(day?.weather_code, true);
             const DayIcon = meta.Icon;
@@ -1121,7 +1148,7 @@ export default function SensorsPage() {
             return (
               <div
                 key={`${selectedSensor.id}-${day?.date ?? "day"}`}
-                className="rounded-2xl border border-slate-200/80 bg-white/78 p-4"
+                className="ws-card-panel rounded-2xl p-4"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
@@ -1144,15 +1171,15 @@ export default function SensorsPage() {
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <span className="text-slate-500">Rain chance</span>
+                    <span className="text-slate-500">Precip chance</span>
                     <span className="font-semibold text-slate-900">
                       {formatPercent(day?.precipitation_probability_max)}
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-3">
-                    <span className="text-slate-500">Rain sum</span>
+                    <span className="text-slate-500">Precip sum</span>
                     <span className="font-semibold text-slate-900">
-                      {formatRainAmount(day?.rain_sum)}
+                      {formatPrecipAmount(day?.rain_sum)}
                     </span>
                   </div>
                 </div>
@@ -1163,7 +1190,7 @@ export default function SensorsPage() {
       </div>
     </>
   ) : (
-    <div className="mt-4 rounded-2xl border border-slate-200/80 bg-slate-50/80 px-4 py-4 text-sm text-slate-500">
+    <div className="ws-card-panel-soft mt-4 rounded-2xl px-4 py-4 text-sm text-slate-500">
       Forecast context is unavailable for this station right now. The live sensor
       list still reflects your primary data sources.
     </div>
@@ -1173,7 +1200,7 @@ export default function SensorsPage() {
 {/* Table card */}
 <div className="ws-card overflow-hidden">
   {/* Header: summary + location dropdown */}
-  <div className="px-4 pt-4 pb-2 flex flex-wrap gap-3 items-center justify-between">
+  <div className="flex flex-col gap-3 px-4 pb-2 pt-4 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
     <p className="text-xs sm:text-sm text-slate-600">
       Showing{" "}
       <span className="font-semibold">{filtered.length}</span> of{" "}
@@ -1181,12 +1208,12 @@ export default function SensorsPage() {
       (filter: <span className="lowercase">{filterLabel()}</span>).
     </p>
 
-    <div className="flex items-center gap-2 text-xs sm:text-sm">
+    <div className="flex w-full items-center gap-2 text-xs sm:w-auto sm:text-sm">
       <span className="text-slate-500">Location:</span>
       <select
         value={locationFilter}
         onChange={(e) => setLocationFilter(e.target.value)}
-        className="rounded-full border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-1 text-xs sm:text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-300"
+        className="ws-card-control min-w-0 flex-1 rounded-full px-3 py-1 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-300 sm:flex-none sm:text-sm"
       >
         <option value="all">All locations</option>
         {uniqueLocations.map((loc) => (
@@ -1198,10 +1225,77 @@ export default function SensorsPage() {
     </div>
   </div>
 
+  <div className="space-y-3 px-4 pb-4 pt-2 sm:hidden">
+    {filtered.length > 0 ? (
+      filtered.map((sensor) => {
+        const status = getStatusMeta(sensor);
+
+        return (
+          <button
+            key={`${sensor.id}-mobile-card`}
+            type="button"
+            onClick={() => setSelectedSensorId(sensor.id)}
+            className={[
+              "w-full rounded-[1.2rem] border px-4 py-4 text-left transition",
+              selectedSensorId === sensor.id
+                ? "border-sky-300 bg-sky-50/82 shadow-[0_12px_28px_rgba(14,165,233,0.12)]"
+                : "ws-card-panel hover:bg-sky-50/40",
+            ].join(" ")}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-3">
+                <TypeIcon type={sensor.type} />
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-semibold text-slate-800">
+                    {sensor.name}
+                  </p>
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    {typeLabel(sensor.type)}
+                  </p>
+                </div>
+              </div>
+              <span className="text-right text-sm font-semibold text-slate-900">
+                {getLatestValue(sensor)}
+              </span>
+            </div>
+
+            <div className="mt-3 flex items-center gap-1.5 text-[11px] text-slate-600">
+              <MapPin className="h-3.5 w-3.5 text-slate-400" />
+              <span className="truncate">{sensor.location}</span>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
+              <div className="ws-card-panel-soft rounded-xl px-3 py-2">
+                <p className="text-slate-500">Last ping</p>
+                <p className="mt-1 font-medium text-slate-700">{getLastPing(sensor)}</p>
+              </div>
+              <div className="ws-card-panel-soft rounded-xl px-3 py-2">
+                <p className="text-slate-500">Status</p>
+                <span
+                  className={[
+                    "mt-1 inline-flex items-center gap-1 rounded-full border px-2 py-0.5",
+                    status.className,
+                  ].join(" ")}
+                >
+                  <span className={["h-1.5 w-1.5 rounded-full", status.dotClassName].join(" ")} />
+                  {status.label}
+                </span>
+              </div>
+            </div>
+          </button>
+        );
+      })
+    ) : (
+      <div className="ws-card-panel rounded-xl px-4 py-4 text-center text-xs text-slate-500">
+        No stations in this category / location combination yet.
+      </div>
+    )}
+  </div>
+
   {/* Actual table */}
-  <div className="overflow-x-auto">
+  <div className="hidden overflow-x-auto sm:block">
     <table className="min-w-full text-xs sm:text-sm border-t border-[var(--ws-border-subtle)]">
-      <thead className="bg-[var(--ws-bg-elevated)]">
+      <thead className="ws-card-table-head">
         <tr className="border-b border-[var(--ws-border-subtle)] text-slate-500">
           <th className="text-left px-4 py-2 font-medium">Station</th>
           <th className="text-left px-4 py-2 font-medium">Type</th>
@@ -1218,8 +1312,7 @@ export default function SensorsPage() {
         {filtered.map((sensor, i) => {
           const isEven = i % 2 === 0;
           const rowBg = isEven ? "bg-white" : "bg-[#fffdf0]";
-          const isFallbackRow =
-            isFallbackData && latestReadingsBySensor[sensor.id]?.source === "fallback";
+          const status = getStatusMeta(sensor);
 
           return (
             <tr
@@ -1283,24 +1376,13 @@ export default function SensorsPage() {
                 <span
                   className={[
                     "inline-flex items-center gap-1 rounded-full border px-2 py-0.5",
-                    isFallbackRow
-                      ? "bg-sky-50 text-sky-700 border-sky-200"
-                      : sensor.is_active
-                      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                      : "bg-slate-100 text-slate-500 border-slate-200",
+                    status.className,
                   ].join(" ")}
                 >
                   <span
-                    className={[
-                      "h-1.5 w-1.5 rounded-full",
-                      isFallbackRow
-                        ? "bg-sky-500"
-                        : sensor.is_active
-                          ? "bg-emerald-500"
-                          : "bg-slate-400",
-                    ].join(" ")}
+                    className={["h-1.5 w-1.5 rounded-full", status.dotClassName].join(" ")}
                   />
-                  {isFallbackRow ? "Fallback" : sensor.is_active ? "Active" : "Offline"}
+                  {status.label}
                 </span>
               </td>
             </tr>

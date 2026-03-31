@@ -134,10 +134,10 @@ export default function CartPage() {
 
   return (
     <main className="min-h-screen">
-      <section className="max-w-5xl mx-auto px-4 py-10 space-y-6">
+      <section className="max-w-5xl mx-auto px-4 py-6 space-y-5 sm:py-10 sm:space-y-6">
         {/* Header */}
-        <div className="ws-card p-6 space-y-2">
-          <h1 className="text-2xl sm:text-3xl font-semibold leading-tight tracking-tight">
+        <div className="ws-card p-5 space-y-2 sm:p-6">
+          <h1 className="text-xl sm:text-3xl font-semibold leading-tight tracking-tight">
               {userName === "Guest"
               ? "You are browsing as Guest. Set an active user on the Users page to keep carts separate."
               : `Cart for ${userName}`}
@@ -145,7 +145,7 @@ export default function CartPage() {
         </div>
 
         {/* Cart body */}
-        <div className="ws-card p-6 space-y-4">
+        <div className="ws-card p-5 space-y-4 sm:p-6">
           {items.length === 0 ? (
             <p className="text-xs text-slate-600">
               Your cart is empty. Go to{" "}
@@ -156,47 +156,47 @@ export default function CartPage() {
             </p>
           ) : (
             <>
-              <ul className="space-y-3 text-xs">
+              <ul className="space-y-4 text-xs">
                 {items.map((it) => (
                   <li
                     key={it.id}
-                    className="flex items-center justify-between gap-3 border-b border-[var(--ws-border-subtle)] pb-3"
+                    className="ws-card-panel flex flex-col gap-4 rounded-[1.4rem] p-4 sm:flex-row sm:items-center sm:justify-between"
                   >
-                    <div className="flex items-center gap-3 min-w-0">
+                    <div className="flex items-start gap-3 min-w-0">
                       {getItemImage(it) ? (
                         <img
                           src={getItemImage(it)!}
                           alt={it.name}
-                          className="h-40 w-40 rounded-xl border border-[var(--ws-border-subtle)] bg-white object-contain p-2 shadow-sm"
+                          className="ws-card-panel-soft h-24 w-24 rounded-xl object-contain p-2 sm:h-32 sm:w-32"
                         />
                       ) : (
-                        <div className="h-12 w-12 rounded-lg border border-[var(--ws-border-subtle)] bg-slate-100" />
+                        <div className="ws-card-panel-soft h-12 w-12 rounded-lg" />
                       )}
                       <div className="min-w-0">
                         <p className="text-[15px] font-semibold text-slate-800 truncate">
                           {it.name}
                         </p>
-                        <p className="text-[30px] text-slate-500">
+                        <p className="text-lg text-slate-500 sm:text-[30px]">
                           {it.price}
                         </p>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2 sm:justify-end">
                       <button
                         type="button"
                         onClick={() => handleChangeQuantity(it.id, -1)}
-                        className="h-6 w-6 rounded-full border border-[var(--ws-border-subtle)] text-slate-700 text-xs hover:bg-slate-100"
+                        className="ws-card-pill h-6 w-6 rounded-full text-slate-700 text-xs"
                       >
                         −
                       </button>
-                      <span className="min-w-[2rem] text-center text-[11px]">
+                      <span className="min-w-[2.25rem] text-center text-[11px] font-medium">
                         {it.quantity ?? 1}
                       </span>
                       <button
                         type="button"
                         onClick={() => handleChangeQuantity(it.id, +1)}
-                        className="h-6 w-6 rounded-full border border-[var(--ws-border-subtle)] text-slate-700 text-xs hover:bg-slate-100"
+                        className="ws-card-pill h-6 w-6 rounded-full text-slate-700 text-xs"
                       >
                         +
                       </button>
@@ -212,7 +212,7 @@ export default function CartPage() {
                 ))}
               </ul>
 
-              <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 text-xs pt-2 border-t border-[var(--ws-border-subtle)]">
+              <div className="flex flex-col gap-4 border-t border-[var(--ws-border-subtle)] pt-4 text-xs sm:flex-row sm:items-start sm:justify-between">
                 <div className="space-y-2">
                   <span className="block text-slate-600">
                     {totalItems} item{totalItems === 1 ? "" : "s"}
@@ -224,8 +224,8 @@ export default function CartPage() {
                   </p>
                 </div>
 
-                <div className="flex flex-col items-start sm:items-end gap-3">
-                  <span className="text-[20px] font-semibold text-slate-800">
+                <div className="flex flex-col items-start gap-3 sm:items-end">
+                  <span className="text-lg font-semibold text-slate-800 sm:text-[20px]">
                     Approx total: RM {totalPrice.toFixed(2)}
                   </span>
                   <Link to="/about" className="ws-button-primary text-xs">

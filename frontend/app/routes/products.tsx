@@ -128,23 +128,23 @@ function handleAddToCart(item: CartItem) {
 
   return (
     <main className="min-h-screen">
-      <section className="max-w-5xl mx-auto px-4 py-4 space-y-4">
+      <section className="max-w-5xl mx-auto px-4 py-6 space-y-4 sm:py-8">
         {/* Header (floating, no card) */}
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2.5">
           {/* <p className="text-xs uppercase tracking-wide text-slate-500">
             Products
           </p> */}
           <h1 className="text-2xl sm:text-5xl font-bold leading-tight tracking-tight">
             Choose your Water Status setup.
           </h1>
-          <p className="mt-1 text-sm:text-3xl text-slate-600 max-w-xl leading-relaxed">
+          <p className="mt-1 max-w-xl text-sm leading-6 text-slate-600 sm:text-base sm:leading-relaxed">
             Combine IoT sensor hardware with the future support tools we&apos;re
             building to monitor water levels and alerts in real time.
           </p>
         </div>
 
         {/* Tabs as a 2-column segmented control, sitting above the content card */}
-        <div className="mt-3 grid grid-cols-2 rounded-xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] text-xs overflow-hidden">
+        <div className="ws-card-segmented mt-3 grid grid-cols-2 overflow-hidden rounded-xl text-xs">
           <button
             type="button"
             onClick={() => setActiveTab("sensors")}
@@ -185,7 +185,7 @@ function handleAddToCart(item: CartItem) {
 
 function SensorsTab({ onAddToCart }: { onAddToCart: (item: CartItem) => void }) {
   return (
-    <div className="ws-card p-6 space-y-4">
+    <div className="ws-card p-5 space-y-4 sm:p-6">
       <h2 className="text-sm font-semibold">IoT sensor bundles</h2>
       <p className="text-xs text-slate-600 max-w-xl">
         Pick the hardware kit that matches your site: small rivers, urban
@@ -194,11 +194,11 @@ function SensorsTab({ onAddToCart }: { onAddToCart: (item: CartItem) => void }) 
 
       <div className="grid gap-4 sm:grid-cols-3">
         {/* Starter Kit */}
-        <div className="rounded-xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] p-4 text-xs flex flex-col gap-2">
+        <div className="ws-card-panel rounded-[1.4rem] p-4 text-xs flex flex-col gap-2 transition-transform duration-200 hover:-translate-y-1">
           <img
             src="/images/basic.png"
             alt="Water Status starter kit"
-            className="mb-3 h-full w-full object-contain"
+            className="ws-card-panel-soft mb-3 aspect-[4/3] w-full rounded-xl object-contain p-3"
           />
           <p className="text-sm font-semibold">Starter Kit</p>
           <p className="text-[11px] text-slate-600">
@@ -207,7 +207,7 @@ function SensorsTab({ onAddToCart }: { onAddToCart: (item: CartItem) => void }) 
           </p>
           <p className="text-sm font-semibold mt-1">RM 9.99</p>
           <button
-            className="mt-2 ws-button-primary text-xs"
+            className="mt-2 inline-flex w-full items-center justify-center ws-button-primary text-xs"
             onClick={() =>
               onAddToCart({
                 id: "starter-kit",
@@ -222,11 +222,11 @@ function SensorsTab({ onAddToCart }: { onAddToCart: (item: CartItem) => void }) 
         </div>
 
         {/* Neighbour Bundle */}
-        <div className="rounded-xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] p-4 text-xs flex flex-col gap-2">
+        <div className="ws-card-panel rounded-[1.4rem] p-4 text-xs flex flex-col gap-2 transition-transform duration-200 hover:-translate-y-1">
           <img
             src="/images/bundle.png"
             alt="Water Status neighbour bundle"
-            className="mb-3 h-full w-full object-contain"
+            className="ws-card-panel-soft mb-3 aspect-[4/3] w-full rounded-xl object-contain p-3"
           />
           <p className="text-sm font-semibold">Neighbour Bundle</p>
           <p className="text-[11px] text-slate-600">
@@ -234,7 +234,7 @@ function SensorsTab({ onAddToCart }: { onAddToCart: (item: CartItem) => void }) 
           </p>
           <p className="text-sm font-semibold mt-1">RM 19.99</p>
           <button
-            className="mt-2 ws-button-primary text-xs"
+            className="mt-2 inline-flex w-full items-center justify-center ws-button-primary text-xs"
             onClick={() =>
               onAddToCart({
                 id: "neighbour-bundle",
@@ -249,11 +249,11 @@ function SensorsTab({ onAddToCart }: { onAddToCart: (item: CartItem) => void }) 
         </div>
 
         {/* Community Pack */}
-        <div className="rounded-xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] p-4 text-xs flex flex-col gap-2">
+        <div className="ws-card-panel rounded-[1.4rem] p-4 text-xs flex flex-col gap-2 transition-transform duration-200 hover:-translate-y-1">
           <img
             src="/images/superbundle.png"
             alt="Water Status community pack"
-            className="mb-3 h-full w-full object-contain"
+            className="ws-card-panel-soft mb-3 aspect-[4/3] w-full rounded-xl object-contain p-3"
           />
           <p className="text-sm font-semibold">Community Pack</p>
           <p className="text-[11px] text-slate-600">
@@ -261,7 +261,7 @@ function SensorsTab({ onAddToCart }: { onAddToCart: (item: CartItem) => void }) 
           </p>
           <p className="text-sm font-semibold mt-1">RM 24.99</p>
           <button
-            className="mt-2 ws-button-primary text-xs"
+            className="mt-2 inline-flex w-full items-center justify-center ws-button-primary text-xs"
             onClick={() =>
               onAddToCart({
                 id: "community-pack",
@@ -281,10 +281,10 @@ function SensorsTab({ onAddToCart }: { onAddToCart: (item: CartItem) => void }) 
 
 function SubscriptionsTab() {
   return (
-    <div className="ws-card p-6 space-y-4">
+    <div className="ws-card p-5 space-y-4 sm:p-6">
       <h2 className="text-sm font-semibold">Subscription plans</h2>
 
-      <div className="rounded-xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] p-4 sm:p-5 space-y-3">
+      <div className="ws-card-panel rounded-xl p-4 sm:p-5 space-y-3">
         <p className="text-sm font-semibold text-slate-800">
           This could all be yours if we build it together.
         </p>
@@ -292,14 +292,14 @@ function SubscriptionsTab() {
           These features are part of the future we imagine for Water Status.
           Support the mission and help us bring them to life.
         </p>
-        <Link to="/about" className="inline-flex ws-button-primary text-xs">
+        <Link to="/about" className="inline-flex w-full items-center justify-center ws-button-primary text-xs sm:w-auto">
           Help us build this
         </Link>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3 items-start">
         {/* Free */}
-        <div className="rounded-xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] p-4 text-xs flex flex-col gap-2">
+        <div className="ws-card-panel rounded-xl p-4 text-xs flex flex-col gap-2">
           <span className="inline-flex w-fit rounded-full border border-slate-200 bg-slate-100 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-slate-600">
             Future dream
           </span>
@@ -316,7 +316,7 @@ function SubscriptionsTab() {
         </div>
 
         {/* Plus */}
-        <div className="rounded-xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] p-4 text-xs flex flex-col gap-2">
+        <div className="ws-card-panel rounded-xl p-4 text-xs flex flex-col gap-2">
           <span className="inline-flex w-fit rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-sky-700">
             Build-it-together
           </span>
@@ -333,23 +333,23 @@ function SubscriptionsTab() {
         </div>
 
         {/* Ultra with glow */}
-        <div className="rounded-xl border border-emerald-400 bg-emerald-600/95 p-4 text-xs flex flex-col gap-2 text-emerald-50 shadow-lg shadow-emerald-500/60 ring-2 ring-emerald-300/70">
-          <span className="inline-flex w-fit rounded-full border border-emerald-200/70 bg-white/15 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-50">
+        <div className="ws-card-panel rounded-xl border-emerald-200/90 p-4 text-xs flex flex-col gap-2 shadow-[0_16px_32px_rgba(16,185,129,0.08)]">
+          <span className="inline-flex w-fit rounded-full border border-emerald-200/80 bg-emerald-50/90 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
             Next chapter
           </span>
-          <p className="text-sm font-semibold">Ultra</p>
+          <p className="text-sm font-semibold text-slate-900">Ultra</p>
           <img
             src="/images/satellite-iot-energy-agriculture.jpg"
             alt="Water Status community pack"
-            className="mb-3 h-24 w-full object-cover rounded-lg border-4 border-white/80 bg-white"
+            className="ws-card-panel-soft mb-3 h-24 w-full rounded-lg object-cover"
           />
-          <ul className="text-[11px] text-emerald-100 list-disc pl-4 space-y-0.5">
+          <ul className="text-[11px] text-slate-600 list-disc pl-4 space-y-0.5">
             <li>Unlimited devices</li>
             <li>Priority support</li>
             <li>Full history export</li>
           </ul>
-          <p className="text-sm font-semibold mt-1">RM 19.99 / month</p>
-          <p className="mt-2 text-[11px] font-medium text-emerald-100">
+          <p className="text-sm font-semibold mt-1 text-slate-900">RM 19.99 / month</p>
+          <p className="mt-2 text-[11px] font-medium text-slate-500">
             A partner-ready next chapter for wider flood resilience work.
           </p>
         </div>

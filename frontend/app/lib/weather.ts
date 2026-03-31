@@ -54,6 +54,62 @@ export type WeatherForecastSummary = {
   daily: WeatherForecastDay[];
 };
 
+export type WeatherLocationBucket = {
+  start?: string | null;
+  end?: string | null;
+  rain_amount?: number | null;
+  precipitation_probability?: number | null;
+};
+
+export type WeatherLocationHourlyPoint = {
+  time?: string | null;
+  offset_hours: number;
+  rain_amount?: number | null;
+  precipitation_amount?: number | null;
+  precipitation_probability?: number | null;
+  temperature_2m?: number | null;
+};
+
+export type WeatherLocationMapSample = {
+  id: string;
+  latitude: number;
+  longitude: number;
+};
+
+export type WeatherLocationMapFrameSample = {
+  sample_id: string;
+  precipitation_amount?: number | null;
+  temperature_2m?: number | null;
+};
+
+export type WeatherLocationMapFrame = {
+  label: string;
+  time?: string | null;
+  samples: WeatherLocationMapFrameSample[];
+};
+
+export type WeatherLocationContext = {
+  status: "ok" | "unavailable" | "error";
+  source?: string;
+  generated_at?: string | null;
+  location: {
+    label: string;
+    latitude: number;
+    longitude: number;
+    mode: "gps" | "manual";
+  };
+  current?: WeatherForecastCurrent | null;
+  next_6h?: WeatherForecastWindow | null;
+  daily: WeatherForecastDay[];
+  next_hour_30m: WeatherLocationBucket[];
+  hourly_timeline: WeatherLocationHourlyPoint[];
+  map: {
+    radius_km: number;
+    samples: WeatherLocationMapSample[];
+    frames: WeatherLocationMapFrame[];
+  };
+};
+
 export const OPEN_METEO_ATTRIBUTION_LABEL = "Weather data by Open-Meteo.com";
 export const OPEN_METEO_ATTRIBUTION_URL = "https://open-meteo.com/";
 
@@ -78,6 +134,38 @@ export async function fetchForecastSummaries(
 
   const payload = await response.json();
   return Array.isArray(payload?.summaries) ? payload.summaries : [];
+}
+
+export async function fetchLocationForecastContext({
+  latitude,
+  longitude,
+  radiusKm = 8,
+  label,
+  mode,
+}: {
+  latitude: number;
+  longitude: number;
+  radiusKm?: number;
+  label?: string;
+  mode: "gps" | "manual";
+}): Promise<WeatherLocationContext> {
+  const params = new URLSearchParams({
+    latitude: String(latitude),
+    longitude: String(longitude),
+    radius_km: String(radiusKm),
+    mode,
+  });
+  if (label?.trim()) {
+    params.set("label", label.trim());
+  }
+
+  const response = await fetch(`${API_BASE}/weather/location-context?${params.toString()}`);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const payload = await response.json();
+  return payload as WeatherLocationContext;
 }
 
 export function getWeatherCodeMeta(
@@ -131,7 +219,7 @@ export function getWeatherCodeMeta(
     weatherCode === 81 ||
     weatherCode === 82
   ) {
-    return { label: "Rain", Icon: CloudRain };
+    return { label: "Precipitation", Icon: CloudRain };
   }
 
   if (
@@ -167,7 +255,7 @@ export function formatWind(value: number | null | undefined): string {
   return `${Math.round(Number(value))} km/h`;
 }
 
-export function formatRainAmount(value: number | null | undefined): string {
+export function formatPrecipAmount(value: number | null | undefined): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return "—";
   return `${Number(value).toFixed(1).replace(/\.0$/, "")} mm`;
 }
@@ -180,5 +268,15 @@ export function formatShortDate(value: string | null | undefined): string {
     weekday: "short",
     month: "short",
     day: "numeric",
+  });
+}
+
+export function formatShortTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
   });
 }

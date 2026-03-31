@@ -59,7 +59,7 @@ function OrbitingPreviewGlobe({
 
   return (
     <div className="absolute inset-0 overflow-hidden bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.9),rgba(219,234,254,0.55)_38%,rgba(226,232,240,0.32)_78%)]">
-      <div className="ws-orbit-atmosphere absolute left-1/2 top-1/2 h-[22rem] w-[22rem] -translate-x-1/2 -translate-y-[57%] rounded-full" />
+      <div className="ws-orbit-atmosphere absolute left-1/2 top-1/2 h-[16rem] w-[16rem] -translate-x-1/2 -translate-y-[57%] rounded-full sm:h-[22rem] sm:w-[22rem]" />
       <div className="ws-orbit-ring ws-orbit-ring--outer" />
       <div className="ws-orbit-ring ws-orbit-ring--mid" />
       <div className="ws-orbit-ring ws-orbit-ring--inner" />
@@ -79,12 +79,12 @@ function OrbitingPreviewGlobe({
 
       <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-white/85 to-transparent" />
 
-      <div className="absolute inset-x-6 bottom-5">
+      <div className="absolute inset-x-4 bottom-4 sm:inset-x-6 sm:bottom-5">
         <div className="rounded-2xl border border-slate-200/70 bg-white/78 px-4 py-3 text-center shadow-[0_12px_30px_rgba(15,23,42,0.08)] backdrop-blur-sm">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 sm:text-[11px]">
             {title}
           </p>
-          <p className="mt-1 text-sm text-slate-600">{description}</p>
+          <p className="mt-1 text-xs text-slate-600 sm:text-sm">{description}</p>
         </div>
       </div>
     </div>
@@ -93,20 +93,22 @@ function OrbitingPreviewGlobe({
 
 export function HeroPreviewMap({
   items,
-  hoveredPreviewId,
+  activePreviewId,
   isClient,
   loading,
   error,
   hasPreviewItems,
   isFallbackPreview,
+  footerAction,
 }: {
   items: PreviewItem[];
-  hoveredPreviewId: string | null;
+  activePreviewId: string | null;
   isClient: boolean;
   loading: boolean;
   error: string | null;
   hasPreviewItems: boolean;
   isFallbackPreview: boolean;
+  footerAction?: React.ReactNode;
 }) {
   const [isLiveMapMounted, setIsLiveMapMounted] = useState(false);
   const prefersReducedMotion = useReducedMotion();
@@ -139,9 +141,9 @@ export function HeroPreviewMap({
   return (
     <div className="ws-hero-glow rounded-[1.5rem]">
       <div className="ws-hero-glass-card overflow-hidden rounded-[1.5rem]">
-        <div className="ws-hero-glass-divider flex items-start justify-between gap-3 border-b px-4 py-3">
+        <div className="ws-hero-glass-divider flex flex-wrap items-start justify-between gap-3 border-b px-4 py-3">
           <div className="space-y-1">
-            <div className="inline-flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+            <div className="inline-flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 sm:text-[11px]">
               <MapPin className="h-3.5 w-3.5 text-[var(--ws-accent)]" />
               <span>Sensor preview across Klang Valley</span>
             </div>
@@ -152,7 +154,7 @@ export function HeroPreviewMap({
           </span>
         </div>
 
-        <div className="relative h-56 overflow-hidden bg-[linear-gradient(180deg,rgba(240,249,255,0.65),rgba(226,232,240,0.4))] sm:h-[16.75rem]">
+        <div className="relative h-48 overflow-hidden bg-[linear-gradient(180deg,rgba(240,249,255,0.65),rgba(226,232,240,0.4))] sm:h-56 lg:h-[23.1rem]">
           <motion.div
             className="absolute inset-0"
             initial={false}
@@ -180,7 +182,7 @@ export function HeroPreviewMap({
                   <Suspense fallback={null}>
                     <LazyHeroPreviewLeafletMap
                       items={items}
-                      hoveredPreviewId={hoveredPreviewId}
+                      activePreviewId={activePreviewId}
                       onReady={() => setIsLiveMapMounted(true)}
                     />
                   </Suspense>
@@ -190,6 +192,11 @@ export function HeroPreviewMap({
               </>
             ) : null}
           </motion.div>
+          {footerAction ? (
+            <div className="absolute bottom-4 right-4 z-[600] pointer-events-auto">
+              {footerAction}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

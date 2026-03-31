@@ -583,7 +583,7 @@ export default function UsersPage() {
                 <h2 className="text-sm font-semibold">Access account</h2>
               </div>
 
-              <div className="inline-flex rounded-full border border-[var(--ws-border-subtle)] p-1 mb-4 bg-[var(--ws-bg-elevated)]">
+              <div className="ws-card-segmented mb-4 inline-flex rounded-full p-1">
                 <button
                   type="button"
                   onClick={() => {
@@ -621,7 +621,7 @@ export default function UsersPage() {
                     <input
                       value={username}
                       onChange={(e) => setUsername(sanitizeUsernameInput(e.target.value))}
-                      className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
                       placeholder="username"
                       autoComplete="username"
                       required
@@ -634,7 +634,7 @@ export default function UsersPage() {
                       type="password"
                       value={password}
                       onChange={(e) => setPassword(sanitizePasswordInput(e.target.value))}
-                      className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
                       autoComplete="current-password"
                       required
                     />
@@ -656,7 +656,7 @@ export default function UsersPage() {
                     <input
                       value={username}
                       onChange={(e) => setUsername(sanitizeUsernameInput(e.target.value))}
-                      className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
                       placeholder="new username"
                       autoComplete="username"
                       required
@@ -669,7 +669,7 @@ export default function UsersPage() {
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(sanitizeGmailEmailInput(e.target.value))}
-                      className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
                       autoComplete="email"
                       required
                     />
@@ -681,7 +681,7 @@ export default function UsersPage() {
                       type="password"
                       value={password}
                       onChange={(e) => setPassword(sanitizePasswordInput(e.target.value))}
-                      className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
                       autoComplete="new-password"
                       required
                     />
@@ -693,7 +693,7 @@ export default function UsersPage() {
                       type="password"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(sanitizePasswordInput(e.target.value))}
-                      className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
                       autoComplete="new-password"
                       required
                     />
@@ -707,7 +707,7 @@ export default function UsersPage() {
                         setRegistrationPlan(e.target.value as Plan);
                         setPlanConfirmation("");
                       }}
-                      className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
                     >
                       <option value="free">Free</option>
                       <option value="plus">Plus</option>
@@ -779,7 +779,7 @@ export default function UsersPage() {
               </div>
 
               {!editingProfile && (
-                <div className="rounded-xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-4 py-3 text-sm text-slate-700">
+                <div className="ws-card-panel rounded-xl px-4 py-3 text-sm text-slate-700">
                   <p>
                     Username:{" "}
                     <span className="font-semibold">{currentUser?.username || "-"}</span>
@@ -798,7 +798,7 @@ export default function UsersPage() {
                     <input
                       value={profileUsername}
                       onChange={(e) => setProfileUsername(sanitizeUsernameInput(e.target.value))}
-                      className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
                       required
                     />
                   </div>
@@ -809,7 +809,7 @@ export default function UsersPage() {
                       type="email"
                       value={profileEmail}
                       onChange={(e) => setProfileEmail(sanitizeGmailEmailInput(e.target.value))}
-                      className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
                       required
                     />
                   </div>
@@ -842,13 +842,13 @@ export default function UsersPage() {
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-3">
+                  <div className="ws-card-panel-soft rounded-xl px-3 py-3">
                     <p className="text-[11px] text-slate-500">Posts made</p>
                     <p className="text-lg font-semibold text-slate-800 mt-1">
                       {userStatsLoading ? "..." : userPostsCount}
                     </p>
                   </div>
-                  <div className="rounded-xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-3">
+                  <div className="ws-card-panel-soft rounded-xl px-3 py-3">
                     <p className="text-[11px] text-slate-500 flex items-center gap-1">
                       <Heart className="w-3.5 h-3.5 text-rose-500" />
                       Likes accumulated
@@ -865,13 +865,13 @@ export default function UsersPage() {
                 <div className="flex flex-wrap gap-2">
                   <Link
                     to="/posts"
-                    className="rounded-full border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 transition"
+                    className="ws-card-pill rounded-full px-3 py-1.5 text-xs font-medium text-slate-700 transition"
                   >
                     Go to Posts
                   </Link>
                   <Link
                     to="/sensors"
-                    className="rounded-full border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 transition"
+                    className="ws-card-pill rounded-full px-3 py-1.5 text-xs font-medium text-slate-700 transition"
                   >
                     Browse Stations
                   </Link>

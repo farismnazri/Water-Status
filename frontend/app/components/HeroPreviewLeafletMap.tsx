@@ -44,11 +44,11 @@ function PreviewMapBounds({ items }: { items: PreviewItem[] }) {
 
 export function HeroPreviewLeafletMap({
   items,
-  hoveredPreviewId,
+  activePreviewId,
   onReady,
 }: {
   items: PreviewItem[];
-  hoveredPreviewId: string | null;
+  activePreviewId: string | null;
   onReady?: () => void;
 }) {
   const mapCenter = items.length
@@ -82,7 +82,7 @@ export function HeroPreviewLeafletMap({
 
       {items.map((item) => {
         const markerColor = markerColorForType(item.type);
-        const isHighlighted = hoveredPreviewId === item.id;
+        const isHighlighted = activePreviewId === item.id;
 
         return (
           <Fragment key={item.id}>

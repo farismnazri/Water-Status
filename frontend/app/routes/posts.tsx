@@ -1,7 +1,7 @@
 // app/routes/posts.tsx
 // @ts-nocheck
 import { useEffect, useState } from "react";
-import { Trash2, Heart } from "lucide-react";
+import { Trash2, Heart, ChevronDown, ChevronUp } from "lucide-react";
 import {
   LineChart,
   Line,
@@ -13,6 +13,7 @@ import {
   CartesianGrid,
 } from "recharts";
 import { API_BASE } from "../lib/api";
+import { useMediaQuery } from "../lib/useMediaQuery";
 
 function getCurrentSourceName(): string {
   if (typeof window === "undefined") return "Guest";
@@ -72,6 +73,7 @@ type SensorReading = {
 
 export default function PostsPage() {
   // ---- state ----
+  const isPhoneViewport = useMediaQuery("(max-width: 639px)");
   const [activeUser, setActiveUser] = useState<ActiveUser | null>(null);
   const [sensors, setSensors] = useState<Sensor[]>([]);
   const [reports, setReports] = useState<UserReport[]>([]);
@@ -112,12 +114,13 @@ export default function PostsPage() {
   const [observedAt, setObservedAt] = useState(""); // datetime-local string
 
 // edit state
-const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
 const [editValue, setEditValue] = useState("");
 const [editComment, setEditComment] = useState("");
 const [editType, setEditType] =
   useState<"rain" | "water_level" | "temperature">("rain");
 const [editSensorId, setEditSensorId] = useState<string>("");
+const [chartControlsOpen, setChartControlsOpen] = useState(false);
 
 // Only show sensors that match the currently selected type
 const filteredSensors = sensors.filter((s) => s.type === type);
@@ -130,6 +133,12 @@ const editFilteredSensors = sensors.filter((s) => s.type === editType);
       : type === "water_level"
       ? "m"
       : "°C";
+
+useEffect(() => {
+  if (!isPhoneViewport) {
+    setChartControlsOpen(true);
+  }
+}, [isPhoneViewport]);
 
   // ---- load active user from localStorage ----
   useEffect(() => {
@@ -624,16 +633,29 @@ function getColorForType(
 function getAxisLabelForType(
   t: "rain" | "water_level" | "temperature" | null
 ): string {
-  if (t === "rain") return "Rainfall (mm/h)";
+  if (t === "rain") return "Precip (mm/h)";
   if (t === "water_level") return "Water level (m)";
   if (t === "temperature") return "Temperature (°C)";
   return "Value";
+}
+
+function getDisplayTypeLabel(
+  t: "rain" | "water_level" | "temperature" | string | null | undefined
+): string {
+  if (t === "rain") return "Precip";
+  if (t === "water_level") return "River level";
+  if (t === "temperature") return "Temperature";
+  return t ? String(t) : "Unknown";
 }
 
 const mainLineColor = getColorForType(chartSeriesType);
 const compareLineColor = getColorForType(chartCompareType);
 const userSeriesColor = "#6366f1"; // purple for user reports
 const safeChartHours = Number.isFinite(chartHours) && chartHours > 0 ? chartHours : 24;
+const shouldShowChartControls = !isPhoneViewport || chartControlsOpen;
+const chartMargin = isPhoneViewport
+  ? { top: 10, right: 8, bottom: 0, left: -24 }
+  : { top: 10, right: 20, bottom: 0, left: 0 };
 const latestChartPointMs = chartData.reduce((max: number, row: any) => {
   const pointMs = Number(row?.t);
   return Number.isFinite(pointMs) && pointMs > max ? pointMs : max;
@@ -830,15 +852,15 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
 
   return (
     <main className="min-h-screen">
-      <section className="max-w-5xl mx-auto px-4 py-10 space-y-6">
+      <section className="max-w-5xl mx-auto px-4 py-6 space-y-5 sm:py-10 sm:space-y-6">
         {/* Header */}
-        <div className="ws-card p-6 space-y-3">
-          <div className="flex items-center justify-between gap-4">
+        <div className="ws-card p-5 space-y-3 sm:p-6">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
             <div>
               <p className="text-xs uppercase tracking-wide text-slate-500">
                 Sensor data · prototype
               </p>
-              <h1 className="text-2xl sm:text-1xl font-semibold leading-tight tracking-tight">
+              <h1 className="text-2xl sm:text-3xl font-semibold leading-tight tracking-tight">
                 Time‑series snapshot from your stations.
               </h1>
               <p className="mt-1 text-sm text-slate-600 max-w-xl leading-relaxed">
@@ -856,28 +878,28 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
           </div>
 
           {/* Tabs */}
-          <div className="mt-3 flex text-[11px] border-b border-[var(--ws-border-subtle)]">
+          <div className="ws-card-segmented mt-3 grid grid-cols-2 overflow-hidden rounded-2xl text-[11px]">
             <button
               type="button"
               onClick={() => setHeaderTab("snapshot")}
-              className={
-                "px-3 py-1 -mb-px border-b-2 " +
-                (headerTab === "snapshot"
-                  ? "border-sky-500 font-semibold text-sky-700"
-                  : "border-transparent text-slate-500 hover:text-slate-700")
-              }
+              className={[
+                "px-3 py-2 text-center font-medium transition",
+                headerTab === "snapshot"
+                  ? "bg-sky-600 text-white"
+                  : "text-slate-500 hover:bg-slate-100 hover:text-slate-700",
+              ].join(" ")}
             >
               Snapshot list
             </button>
             <button
               type="button"
               onClick={() => setHeaderTab("chart")}
-              className={
-                "px-3 py-1 -mb-px border-b-2 " +
-                (headerTab === "chart"
-                  ? "border-sky-500 font-semibold text-sky-700"
-                  : "border-transparent text-slate-500 hover:text-slate-700")
-              }
+              className={[
+                "px-3 py-2 text-center font-medium transition",
+                headerTab === "chart"
+                  ? "bg-sky-600 text-white"
+                  : "text-slate-500 hover:bg-slate-100 hover:text-slate-700",
+              ].join(" ")}
             >
               Time‑series chart
             </button>
@@ -900,12 +922,12 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
                   {recentReadings.map((r) => (
                     <li
                       key={r.id}
-                      className="flex items-center justify-between gap-2 border border-[var(--ws-border-subtle)] rounded-md px-2 py-1 bg-[var(--ws-bg-elevated)]/70"
+                      className="ws-card-panel flex flex-col gap-2 rounded-[1rem] px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
                     >
                       <div className="min-w-0">
                         <p className="truncate">
                           <span className="font-semibold text-slate-800">
-                            {r.sensor_name || r.type}
+                            {r.sensor_name || getDisplayTypeLabel(r.type)}
                           </span>
                           {r.location && (
                             <span className="text-slate-500">
@@ -924,7 +946,9 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
                         <p className="text-[11px] font-semibold text-slate-800">
                           {r.value} {r.unit}
                         </p>
-                        <p className="text-[10px] text-slate-500">{r.type}</p>
+                        <p className="text-[10px] text-slate-500">
+                          {getDisplayTypeLabel(r.type)}
+                        </p>
                       </div>
                     </li>
                   ))}
@@ -933,107 +957,128 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
             </div>
           ) : (
             <div className="mt-3 text-xs text-slate-600 space-y-3">
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-slate-500">Type:</span>
-                    <select
-                      value={chartSensorTypeFilter}
-                      onChange={(e) =>
-                        setChartSensorTypeFilter(
-                          e.target.value as "all" | "rain" | "water_level" | "temperature"
-                        )
-                      }
-                      className="rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+              {isPhoneViewport ? (
+                <button
+                  type="button"
+                  onClick={() => setChartControlsOpen((current) => !current)}
+                  className="ws-card-panel inline-flex w-full items-center justify-between rounded-2xl px-3 py-2 text-[11px] font-medium text-slate-700"
+                >
+                  <span>{chartControlsOpen ? "Hide chart setup" : "Show chart setup"}</span>
+                  {chartControlsOpen ? (
+                    <ChevronUp className="h-4 w-4" />
+                  ) : (
+                    <ChevronDown className="h-4 w-4" />
+                  )}
+                </button>
+              ) : null}
+
+              {shouldShowChartControls ? (
+                <div className="space-y-2">
+                  <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                      <span className="text-[11px] text-slate-500">Type:</span>
+                      <select
+                        value={chartSensorTypeFilter}
+                        onChange={(e) =>
+                          setChartSensorTypeFilter(
+                            e.target.value as "all" | "rain" | "water_level" | "temperature"
+                          )
+                        }
+                        className="ws-card-control rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                      >
+                        <option value="all">All types</option>
+                        <option value="rain">Precip</option>
+                        <option value="water_level">River level</option>
+                        <option value="temperature">Temperature</option>
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                      <span className="text-[11px] text-slate-500">Station:</span>
+                      <select
+                        value={chartSensorId}
+                        onChange={(e) => setChartSensorId(e.target.value)}
+                        className="ws-card-control rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                      >
+                        <option value="">Choose a station…</option>
+                        {chartSensorOptions.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name} {s.location ? `· ${s.location}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                      <span className="text-[11px] text-slate-500">Window:</span>
+                      <select
+                        value={String(chartHours)}
+                        onChange={(e) => {
+                          const next = Number.parseInt(e.target.value, 10);
+                          setChartHours(Number.isFinite(next) && next > 0 ? next : 24);
+                        }}
+                        className="ws-card-control rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                      >
+                        <option value="6">Last 6 hours</option>
+                        <option value="12">Last 12 hours</option>
+                        <option value="24">Last 24 hours</option>
+                        <option value="48">Last 48 hours</option>
+                        <option value="168">Last 7 days</option>
+                      </select>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={handleLoadChart}
+                      className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 text-[11px] text-sky-700 transition hover:bg-sky-100 sm:ml-auto"
                     >
-                      <option value="all">All types</option>
-                      <option value="rain">Rain</option>
-                      <option value="water_level">River level</option>
-                      <option value="temperature">Temperature</option>
-                    </select>
+                      Load chart
+                    </button>
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-slate-500">Station:</span>
-                    <select
-                      value={chartSensorId}
-                      onChange={(e) => setChartSensorId(e.target.value)}
-                      className="rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
-                    >
-                      <option value="">Choose a station…</option>
-                      {chartSensorOptions.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name} {s.location ? `· ${s.location}` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  <div className="grid gap-2 sm:flex sm:flex-wrap sm:items-center">
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                      <span className="text-[11px] text-slate-500">Compare type:</span>
+                      <select
+                        value={chartCompareTypeFilter}
+                        onChange={(e) =>
+                          setChartCompareTypeFilter(
+                            e.target.value as "match" | "rain" | "water_level" | "temperature"
+                          )
+                        }
+                        className="ws-card-control rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                        disabled={!chartSensorId}
+                      >
+                        <option value="match">Match main type</option>
+                        <option value="rain">Precip</option>
+                        <option value="water_level">River level</option>
+                        <option value="temperature">Temperature</option>
+                      </select>
+                    </div>
 
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-slate-500">Window:</span>
-                    <select
-                      value={String(chartHours)}
-                      onChange={(e) => {
-                        const next = Number.parseInt(e.target.value, 10);
-                        setChartHours(Number.isFinite(next) && next > 0 ? next : 24);
-                      }}
-                      className="rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
-                    >
-                      <option value="6">Last 6 hours</option>
-                      <option value="12">Last 12 hours</option>
-                      <option value="24">Last 24 hours</option>
-                      <option value="48">Last 48 hours</option>
-                      <option value="168">Last 7 days</option>
-                    </select>
+                    <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+                      <span className="text-[11px] text-slate-500">Compare station:</span>
+                      <select
+                        value={chartCompareSensorId}
+                        onChange={(e) => setChartCompareSensorId(e.target.value)}
+                        className="ws-card-control rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                        disabled={!chartSensorId || compareSensorOptions.length === 0}
+                      >
+                        <option value="">(none)</option>
+                        {compareSensorOptions.map((s) => (
+                          <option key={s.id} value={s.id}>
+                            {s.name} {s.location ? `· ${s.location}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
-
-                  <button
-                    type="button"
-                    onClick={handleLoadChart}
-                    className="ml-auto text-[11px] px-3 py-1 rounded-full bg-sky-50 text-sky-700 border border-sky-200 hover:bg-sky-100 transition"
-                  >
-                    Load chart
-                  </button>
                 </div>
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-slate-500">Compare type:</span>
-                    <select
-                      value={chartCompareTypeFilter}
-                      onChange={(e) =>
-                        setChartCompareTypeFilter(
-                          e.target.value as "match" | "rain" | "water_level" | "temperature"
-                        )
-                      }
-                      className="rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
-                      disabled={!chartSensorId}
-                    >
-                      <option value="match">Match main type</option>
-                      <option value="rain">Rain</option>
-                      <option value="water_level">River level</option>
-                      <option value="temperature">Temperature</option>
-                    </select>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span className="text-[11px] text-slate-500">Compare station:</span>
-                    <select
-                      value={chartCompareSensorId}
-                      onChange={(e) => setChartCompareSensorId(e.target.value)}
-                      className="rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
-                      disabled={!chartSensorId || compareSensorOptions.length === 0}
-                    >
-                      <option value="">(none)</option>
-                      {compareSensorOptions.map((s) => (
-                        <option key={s.id} value={s.id}>
-                          {s.name} {s.location ? `· ${s.location}` : ""}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              </div>
+              ) : (
+                <p className="text-[11px] text-slate-500">
+                  Open chart setup to choose a station and time window.
+                </p>
+              )}
 
               {chartError && (
                 <div className="text-[11px] text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-1">
@@ -1059,9 +1104,9 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
               )}
 
               {chartSensorId && chartData.length > 0 && (
-                <div className="w-full h-64">
+                <div className="w-full h-56 sm:h-64">
                   <ResponsiveContainer width="100%" height="100%">
-<LineChart data={chartData} margin={{ top: 10, right: 20, bottom: 0, left: 0 }}>
+<LineChart data={chartData} margin={chartMargin}>
   <CartesianGrid strokeDasharray="3 3" />
   <XAxis
     type="number"
@@ -1070,36 +1115,50 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
     domain={[chartWindowStartMs, chartWindowEndMs]}
     allowDataOverflow
     tickFormatter={(value) => formatChartTick(Number(value), safeChartHours)}
-    tickCount={safeChartHours >= 48 ? 7 : 6}
-    minTickGap={20}
-    label={{
-      value: safeChartHours >= 48 ? "Date" : "Time",
-      position: "insideBottomLeft",
-      offset: -5,
-      style: { fontSize: 10, fill: "#64748b" },
-    }}
+    tickCount={isPhoneViewport ? 4 : safeChartHours >= 48 ? 7 : 6}
+    minTickGap={isPhoneViewport ? 32 : 20}
+    label={
+      isPhoneViewport
+        ? undefined
+        : {
+            value: safeChartHours >= 48 ? "Date" : "Time",
+            position: "insideBottomLeft",
+            offset: -5,
+            style: { fontSize: 10, fill: "#64748b" },
+          }
+    }
   />
   {/* Left Y-axis for main series */}
   <YAxis
     yAxisId="left"
-    label={{
-      value: chartSeriesLabel || "Value",
-      angle: -90,
-      position: "insideLeft",
-      style: { fontSize: 10, fill: "#64748b" },
-    }}
+    width={isPhoneViewport ? 32 : 40}
+    label={
+      isPhoneViewport
+        ? undefined
+        : {
+            value: chartSeriesLabel || "Value",
+            angle: -90,
+            position: "insideLeft",
+            style: { fontSize: 10, fill: "#64748b" },
+          }
+    }
   />
   {/* Right Y-axis only when compare sensor type differs from main sensor type */}
   {shouldUseDualAxis && (
     <YAxis
       yAxisId="right"
       orientation="right"
-      label={{
-        value: chartCompareLabel || "Compare",
-        angle: -90,
-        position: "insideRight",
-        style: { fontSize: 10, fill: "#64748b" },
-      }}
+      width={isPhoneViewport ? 32 : 40}
+      label={
+        isPhoneViewport
+          ? undefined
+          : {
+              value: chartCompareLabel || "Compare",
+              angle: -90,
+              position: "insideRight",
+              style: { fontSize: 10, fill: "#64748b" },
+            }
+      }
     />
   )}
   <Tooltip
@@ -1114,7 +1173,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
       return [value, name];
     }}
   />
-  <Legend />
+  {!isPhoneViewport ? <Legend /> : null}
   <Line
     type="monotone"
     dataKey="series0"
@@ -1166,7 +1225,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
         <div className="grid gap-5 md:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] items-start">
           {/* create report form */}
           <div className="ws-card p-5">
-                        <div className="flex items-center justify-between mb-2">
+                        <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <h2 className="text-sm font-semibold">Create a report</h2>
               <div className="text-[11px] text-right">
                 {activeUser ? (
@@ -1197,10 +1256,10 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
         setType(newType);
         setSensorId("");        // 🔹 reset sensor when type changes
       }}
-      className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
       disabled={!activeUser}
     >
-      <option value="rain">Rain (mm/h)</option>
+      <option value="rain">Precip (mm/h)</option>
       <option value="water_level">Water level (m)</option>
       <option value="temperature">Temperature (°C)</option>
     </select>
@@ -1214,7 +1273,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
     <select
       value={sensorId}
       onChange={(e) => setSensorId(e.target.value)}
-      className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
       disabled={!activeUser || filteredSensors.length === 0}
     >
       <option value="">
@@ -1240,7 +1299,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
                   step="0.01"
                   value={value}
                   onChange={(e) => setValue(e.target.value)}
-                  className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                  className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
                   placeholder={
                     type === "rain"
                       ? "e.g. 35.6"
@@ -1261,8 +1320,8 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
                   rows={3}
-                  className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300 resize-none"
-                  placeholder="e.g. Rained heavily for 30 minutes, drains almost full."
+                  className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300 resize-none"
+                  placeholder="e.g. Precipitation picked up for 30 minutes, drains almost full."
                   disabled={!activeUser}
                 />
               </div>
@@ -1276,7 +1335,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
                   type="datetime-local"
                   value={observedAt}
                   onChange={(e) => setObservedAt(e.target.value)}
-                  className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                  className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
                   disabled={!activeUser}
                 />
                 <p className="text-[10px] text-slate-500">
@@ -1318,18 +1377,18 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
                   return (
 <li
   key={r.id}
-  className="rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-xs"
+  className="ws-card-panel rounded-[1rem] px-3 py-2 text-xs"
 >
-  <div className="flex items-start justify-between gap-2">
+  <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
     <div>
       <p className="font-semibold text-slate-800">
         {r.sensor_name || r.sensor_id}{" "}
         {r.location ? `· ${r.location}` : ""}
       </p>
     </div>
-    <div className="flex items-center gap-2">
+    <div className="flex flex-wrap items-center gap-2">
       <span className="text-[11px] font-semibold whitespace-nowrap">
-        {r.value} {r.unit} ({r.type})
+        {r.value} {r.unit} ({getDisplayTypeLabel(r.type)})
       </span>
 
       {/* Like button, visible for everyone */}
@@ -1414,9 +1473,9 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
             setEditType(newType);
             setEditSensorId(""); // reset station when type changes
           }}
-          className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+          className="ws-card-control w-full rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
         >
-          <option value="rain">Rain (mm/h)</option>
+          <option value="rain">Precip (mm/h)</option>
           <option value="water_level">Water level (m)</option>
           <option value="temperature">Temperature (°C)</option>
         </select>
@@ -1430,7 +1489,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
         <select
           value={editSensorId}
           onChange={(e) => setEditSensorId(e.target.value)}
-          className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+          className="ws-card-control w-full rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
         >
           <option value="">
             {editFilteredSensors.length
@@ -1455,7 +1514,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
           step="0.01"
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
-          className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+          className="ws-card-control w-full rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
         />
       </div>
 
@@ -1468,7 +1527,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
           rows={2}
           value={editComment}
           onChange={(e) => setEditComment(e.target.value)}
-          className="w-full rounded-lg border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300 resize-none"
+          className="ws-card-control w-full rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300 resize-none"
         />
       </div>
     </div>
@@ -1480,7 +1539,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
     )
   )}
 
-  <div className="mt-2 flex items-center justify-between text-[10px] text-slate-500">
+  <div className="mt-2 flex flex-col gap-1 text-[10px] text-slate-500 sm:flex-row sm:items-center sm:justify-between">
     <span>source: {r.source || "User"}</span>
     <span>
       {r.timestamp ? new Date(r.timestamp).toLocaleString() : ""}

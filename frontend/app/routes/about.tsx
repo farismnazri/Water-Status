@@ -84,15 +84,15 @@ useEffect(() => {
 
   return (
     <main className="min-h-screen">
-      <section className="max-w-6xl mx-auto px-4 py-10 sm:py-14 space-y-16 sm:space-y-24">
+      <section className="max-w-6xl mx-auto px-4 py-6 sm:py-14 space-y-12 sm:space-y-24">
         {/* HERO */}
-        <RevealSection className="relative overflow-hidden rounded-[2rem] border border-[var(--ws-border-subtle)] bg-[linear-gradient(140deg,rgba(255,255,255,0.62),rgba(228,242,252,0.9))] px-6 py-12 sm:px-10 sm:py-16 text-center">
-          <div className="mx-auto max-w-4xl space-y-6">
+        <RevealSection className="relative overflow-hidden rounded-[1.75rem] border border-[var(--ws-border-subtle)] bg-[linear-gradient(140deg,rgba(255,255,255,0.62),rgba(228,242,252,0.9))] px-5 py-10 text-center sm:rounded-[2rem] sm:px-10 sm:py-16">
+          <div className="mx-auto max-w-4xl space-y-5 sm:space-y-6">
             <p className="text-xs sm:text-sm uppercase tracking-[0.2em] text-slate-500">
               About Water Status
             </p>
 
-            <h1 className="text-4xl sm:text-6xl font-semibold tracking-tight leading-[1.05]">
+            <h1 className="text-3xl sm:text-6xl font-semibold tracking-tight leading-[1.05]">
               <span className="block">A community-first early warning system for</span>
               <span className="mt-2 inline-block relative h-[1.12em] overflow-hidden align-baseline text-sky-800">
                 <span
@@ -108,8 +108,8 @@ useEffect(() => {
               </span>
             </h1>
 
-            <div className="mx-auto max-w-3xl rounded-3xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)]/90 px-6 py-5 sm:px-8 sm:py-6 shadow-sm">
-              <p className="text-base sm:text-lg text-slate-700 leading-relaxed">
+            <div className="ws-card-panel mx-auto max-w-3xl rounded-3xl px-5 py-4 sm:px-8 sm:py-6">
+              <p className="text-sm sm:text-lg text-slate-700 leading-relaxed">
                 Water Status combines low-cost IoT sensors, a simple web dashboard
                 and community reports so neighbours can see water levels, act early
                 and protect their homes, farms and small businesses.
@@ -119,9 +119,9 @@ useEffect(() => {
         </RevealSection>
 
         {/* FLOOD IMPACTS */}
-        <section className="space-y-8">
+        <section className="space-y-6 sm:space-y-8">
           <div className="space-y-4 text-center max-w-4xl mx-auto">
-            <h2 className="text-3xl sm:text-5xl font-semibold text-slate-900 leading-tight">
+            <h2 className="text-2xl sm:text-5xl font-semibold text-slate-900 leading-tight">
               When disaster strikes,{" "}
               <span className="inline-block rounded-md bg-blue-900 px-2.5 py-1 text-white">
                 small communities
@@ -137,14 +137,14 @@ useEffect(() => {
 
           <div className="grid gap-6 md:grid-cols-3">
             <RevealSection className="h-full" delayMs={0} initialOffset={40}>
-              <article className="relative flex flex-col h-full rounded-3xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)]/95 shadow-md hover:shadow-lg transition-shadow overflow-hidden">
+              <article className="ws-card-panel relative flex h-full flex-col overflow-hidden rounded-3xl transition-transform duration-200 hover:-translate-y-1">
                 <span className="absolute left-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-900 text-xs font-semibold text-white shadow-sm">
                   1
                 </span>
                 <img
                   src={FloodOneImg}
                   alt="Street and houses affected by local flooding"
-                  className="h-52 w-full object-cover"
+                  className="h-44 w-full object-cover sm:h-52"
                 />
                 <div className="px-5 py-5 space-y-2">
                   <h3 className="text-xl font-semibold text-slate-900">
@@ -159,14 +159,14 @@ useEffect(() => {
             </RevealSection>
 
             <RevealSection className="h-full" delayMs={140} initialOffset={80}>
-              <article className="relative flex flex-col h-full rounded-3xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)]/95 shadow-md hover:shadow-lg transition-shadow overflow-hidden">
+              <article className="ws-card-panel relative flex h-full flex-col overflow-hidden rounded-3xl transition-transform duration-200 hover:-translate-y-1">
                 <span className="absolute left-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-900 text-xs font-semibold text-white shadow-sm">
                   2
                 </span>
                 <img
                   src={FloodTwoImg}
                   alt="Flooded neighbourhood near a small river"
-                  className="h-52 w-full object-cover"
+                  className="h-44 w-full object-cover sm:h-52"
                 />
                 <div className="px-5 py-5 space-y-2">
                   <h3 className="text-xl font-semibold text-slate-900">
@@ -181,14 +181,14 @@ useEffect(() => {
             </RevealSection>
 
             <RevealSection className="h-full" delayMs={280} initialOffset={120}>
-              <article className="relative flex flex-col h-full rounded-3xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)]/95 shadow-md hover:shadow-lg transition-shadow overflow-hidden">
+              <article className="ws-card-panel relative flex h-full flex-col overflow-hidden rounded-3xl transition-transform duration-200 hover:-translate-y-1">
                 <span className="absolute left-4 top-4 inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-900 text-xs font-semibold text-white shadow-sm">
                   3
                 </span>
                 <img
                   src={FloodThreeImg}
                   alt="Shops and small businesses standing in floodwater"
-                  className="h-52 w-full object-cover"
+                  className="h-44 w-full object-cover sm:h-52"
                 />
                 <div className="px-5 py-5 space-y-2">
                   <h3 className="text-xl font-semibold text-slate-900">
@@ -205,9 +205,9 @@ useEffect(() => {
         </section>
 
         {/* SOLUTION FLOW */}
-        <section className="space-y-8">
+        <section className="space-y-6 sm:space-y-8">
           <div className="text-center max-w-4xl mx-auto space-y-4">
-            <h2 className="text-3xl sm:text-5xl font-semibold text-slate-900 leading-tight">
+            <h2 className="text-2xl sm:text-5xl font-semibold text-slate-900 leading-tight">
               Our solution? Connect sensors to simple, local alerts.
             </h2>
             <p className="text-base sm:text-lg text-slate-700 leading-relaxed">
@@ -217,10 +217,10 @@ useEffect(() => {
             </p>
           </div>
 
-          <div className="grid gap-8 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] items-start">
+          <div className="grid gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] items-start">
             <div className="space-y-4">
               <RevealSection delayMs={0}>
-                <article className="rounded-3xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)]/95 shadow-md px-6 py-6 space-y-3">
+                <article className="ws-card-panel rounded-3xl px-6 py-6 space-y-3">
                   <p className="text-xs uppercase tracking-wide text-sky-700 font-semibold">
                     1 · Sensors all over Malaysia
                   </p>
@@ -237,7 +237,7 @@ useEffect(() => {
               <div className="flex justify-center text-slate-400 text-xl font-semibold">↓</div>
 
               <RevealSection delayMs={200}>
-                <article className="rounded-3xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)]/95 shadow-md px-6 py-6 space-y-3">
+                <article className="ws-card-panel rounded-3xl px-6 py-6 space-y-3">
                   <p className="text-xs uppercase tracking-wide text-sky-700 font-semibold">
                     2 · Cloud + neighbourhood dashboard
                   </p>
@@ -254,7 +254,7 @@ useEffect(() => {
               <div className="flex justify-center text-slate-400 text-xl font-semibold">↓</div>
 
               <RevealSection delayMs={400}>
-                <article className="rounded-3xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)]/95 shadow-md px-6 py-6 space-y-3">
+                <article className="ws-card-panel rounded-3xl px-6 py-6 space-y-3">
                   <p className="text-xs uppercase tracking-wide text-sky-700 font-semibold">
                     3 · Alerts on the phone
                   </p>
@@ -271,7 +271,7 @@ useEffect(() => {
             </div>
 
             <RevealSection delayMs={120}>
-              <div className="rounded-[2rem] border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)]/90 p-4 sm:p-6 shadow-md">
+              <div className="ws-card-panel rounded-[2rem] p-4 sm:p-6">
                 <RotatingPhone />
               </div>
             </RevealSection>
@@ -281,8 +281,8 @@ useEffect(() => {
         {/* CTA */}
         <section className="pb-8">
           <RevealSection>
-            <div className="max-w-4xl mx-auto rounded-[2rem] border border-[var(--ws-border-subtle)] bg-[linear-gradient(140deg,rgba(210,237,255,0.7),rgba(241,241,241,0.96))] px-6 py-10 sm:px-12 sm:py-14 text-center space-y-5 shadow-sm">
-              <p className="text-2xl sm:text-4xl font-semibold text-slate-900 leading-tight">
+            <div className="max-w-4xl mx-auto rounded-[1.75rem] border border-[var(--ws-border-subtle)] bg-[linear-gradient(140deg,rgba(210,237,255,0.7),rgba(241,241,241,0.96))] px-5 py-8 text-center space-y-4 shadow-sm sm:rounded-[2rem] sm:px-12 sm:py-14 sm:space-y-5">
+              <p className="text-xl sm:text-4xl font-semibold text-slate-900 leading-tight">
                 Ready to see how Water Status looks on the live dashboard?
               </p>
               <a
