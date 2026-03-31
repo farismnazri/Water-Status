@@ -7,7 +7,7 @@ from app.db import db
 
 
 def generate_rain_value() -> float:
-    """Rain in mm/h. Most of the time 0, sometimes spikes."""
+    """Precipitation in mm/h. Most of the time 0, sometimes spikes."""
     if random.random() < 0.7:
         return 0.0
     return round(random.uniform(1, 40), 1)

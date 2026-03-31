@@ -29,7 +29,7 @@ async def main() -> None:
     for loc in LOCATIONS:
         sensors_to_insert.append(
             {
-                "name": f"{loc['name']} - Rain 0001",
+                "name": f"{loc['name']} - Precip 0001",
                 "type": "rain",
                 "location": loc["name"],
                 "unit": "mm/h",

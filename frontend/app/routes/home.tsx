@@ -31,6 +31,8 @@ import {
   formatTemperature,
   formatWind,
   getWeatherCodeMeta,
+  isForecastRateLimitError,
+  isClientForecastFallbackSource,
   type WeatherLocationContext,
 } from "../lib/weather";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -393,6 +395,17 @@ export default function Home() {
   const [isFallbackPreview, setIsFallbackPreview] = useState(false);
   const [selectedPreviewId, setSelectedPreviewId] = useState<string | null>(null);
   const [hoveredPreviewId, setHoveredPreviewId] = useState<string | null>(null);
+  const [desktopGpsCoords, setDesktopGpsCoords] = useState<{
+    latitude: number;
+    longitude: number;
+  } | null>(null);
+  const [desktopLocationState, setDesktopLocationState] = useState<
+    "idle" | "locating" | "ready" | "unavailable"
+  >("idle");
+  const [desktopLocationMessage, setDesktopLocationMessage] = useState<string | null>(
+    null
+  );
+  const [desktopLocationRequestKey, setDesktopLocationRequestKey] = useState(0);
   const [locationOptions, setLocationOptions] = useState<SensorLocationOption[]>(
     dedupeLocationOptions(fallbackPreviewItems)
   );
@@ -420,6 +433,9 @@ export default function Home() {
   );
   const [locationContextLoading, setLocationContextLoading] = useState(false);
   const [locationContextError, setLocationContextError] = useState<string | null>(null);
+  const [locationContextErrorTone, setLocationContextErrorTone] = useState<
+    "warning" | "neutral"
+  >("neutral");
   const [mobileForecastMetric, setMobileForecastMetric] = useState<"rain" | "temperature">(
     "rain"
   );
@@ -435,6 +451,9 @@ export default function Home() {
   const prefersStablePreview = isCoarsePointer || isSmallViewport;
   const shouldToneDownMotion = prefersReducedMotion || prefersStablePreview;
   const isMobileHome = isSmallViewport || isCoarsePointer;
+  const [isPageVisible, setIsPageVisible] = useState(() =>
+    typeof document === "undefined" ? true : document.visibilityState === "visible"
+  );
 
   function requestCurrentLocation() {
     if (!isClient) return;
@@ -480,6 +499,49 @@ export default function Home() {
     );
   }
 
+  function requestDesktopLocation() {
+    if (!isClient) return;
+
+    if (!navigator.geolocation) {
+      setDesktopGpsCoords(null);
+      setDesktopLocationState("unavailable");
+      setDesktopLocationMessage(
+        "Current-location access isn’t available here. Click a live station to pin its forecast."
+      );
+      return;
+    }
+
+    setDesktopLocationState("locating");
+    setDesktopLocationMessage(null);
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        setDesktopGpsCoords({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        });
+        setDesktopLocationState("ready");
+        setDesktopLocationMessage(null);
+        setLocationContextError(null);
+      },
+      (error) => {
+        console.error(error);
+        setDesktopGpsCoords(null);
+        setDesktopLocationState("unavailable");
+        setDesktopLocationMessage(
+          error.code === error.PERMISSION_DENIED
+            ? "Location access is off. Allow it to keep the forecast centered on you, or click a live station below."
+            : "We couldn’t confirm your current location. Click a live station below to pin its forecast."
+        );
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 8000,
+        maximumAge: 300000,
+      }
+    );
+  }
+
   function handleMapInteraction() {
     if (!isClient) return;
     setMobileMapPaused(true);
@@ -511,7 +573,6 @@ export default function Home() {
   }, [isClient, manualArea]);
 
   useEffect(() => {
-    if (!isMobileHome) return;
     let isMounted = true;
     const controller = new AbortController();
 
@@ -539,7 +600,7 @@ export default function Home() {
       isMounted = false;
       controller.abort();
     };
-  }, [isMobileHome]);
+  }, []);
 
   useEffect(() => {
     if (!isMobileHome) return;
@@ -551,6 +612,11 @@ export default function Home() {
 
     requestCurrentLocation();
   }, [isMobileHome, locationRequestKey]);
+
+  useEffect(() => {
+    if (isMobileHome) return;
+    requestDesktopLocation();
+  }, [desktopLocationRequestKey, isMobileHome]);
 
   useEffect(() => {
     if (isMobileHome) {
@@ -687,13 +753,10 @@ export default function Home() {
       return;
     }
 
-    const defaultPreviewItem =
-      desktopPreviewItems.find(hasCoordinates) ?? desktopPreviewItems[0] ?? null;
-
     setSelectedPreviewId((current) =>
       current && desktopPreviewItems.some((item) => item.id === current)
         ? current
-        : defaultPreviewItem?.id ?? null
+        : null
     );
   }, [desktopPreviewItems]);
 
@@ -708,7 +771,7 @@ export default function Home() {
     [desktopPreviewItems]
   );
 
-  const desktopForecastPreview = useMemo(() => {
+  const desktopPinnedPreview = useMemo(() => {
     const selectedPreview =
       selectedPreviewId !== null
         ? desktopPreviewItems.find((item) => item.id === selectedPreviewId) ?? null
@@ -718,8 +781,17 @@ export default function Home() {
       return selectedPreview;
     }
 
-    return desktopPreviewItems.find(hasCoordinates) ?? null;
+    return null;
   }, [desktopPreviewItems, selectedPreviewId]);
+
+  const desktopGpsLabel = useMemo(() => {
+    if (!desktopGpsCoords) return "Current area";
+    return findNearestLocationLabel(
+      desktopGpsCoords.latitude,
+      desktopGpsCoords.longitude,
+      locationOptions
+    );
+  }, [desktopGpsCoords, locationOptions]);
 
   const gpsLabel = useMemo(() => {
     if (!gpsCoords) return "Current area";
@@ -755,25 +827,57 @@ export default function Home() {
   }, [gpsCoords, gpsLabel, isMobileHome, locationMode, manualArea]);
 
   const desktopForecastTarget = useMemo(() => {
-    if (isMobileHome || isFallbackPreview || !desktopForecastPreview) {
+    if (isMobileHome) {
       return null;
     }
 
-    return {
-      latitude: desktopForecastPreview.latitude,
-      longitude: desktopForecastPreview.longitude,
-      label: desktopForecastPreview.location,
-      mode: "manual" as const,
-    };
-  }, [desktopForecastPreview, isFallbackPreview, isMobileHome]);
+    if (desktopPinnedPreview) {
+      return {
+        latitude: desktopPinnedPreview.latitude,
+        longitude: desktopPinnedPreview.longitude,
+        label: desktopPinnedPreview.location,
+        mode: "manual" as const,
+      };
+    }
+
+    if (desktopGpsCoords) {
+      return {
+        latitude: desktopGpsCoords.latitude,
+        longitude: desktopGpsCoords.longitude,
+        label: desktopGpsLabel,
+        mode: "gps" as const,
+      };
+    }
+
+    return null;
+  }, [desktopGpsCoords, desktopGpsLabel, desktopPinnedPreview, isMobileHome]);
 
   const activeForecastTarget = isMobileHome
     ? mobileLocationTarget
     : desktopForecastTarget;
 
   useEffect(() => {
+    if (!isClient) return;
+
+    const syncVisibility = () => {
+      setIsPageVisible(document.visibilityState === "visible");
+    };
+
+    syncVisibility();
+    document.addEventListener("visibilitychange", syncVisibility);
+    return () => document.removeEventListener("visibilitychange", syncVisibility);
+  }, [isClient]);
+
+  useEffect(() => {
     if (!activeForecastTarget) {
       setLocationContext(null);
+      setLocationContextLoading(false);
+      setLocationContextError(null);
+      setLocationContextErrorTone("neutral");
+      return;
+    }
+
+    if (!isPageVisible) {
       setLocationContextLoading(false);
       return;
     }
@@ -785,6 +889,7 @@ export default function Home() {
       try {
         setLocationContextLoading(true);
         setLocationContextError(null);
+        setLocationContextErrorTone("neutral");
         const nextContext = await fetchLocationForecastContext({
           latitude: target.latitude,
           longitude: target.longitude,
@@ -797,13 +902,14 @@ export default function Home() {
       } catch (error) {
         console.error(error);
         if (!isMounted) return;
-        if (error instanceof Error && error.message === "HTTP 404") {
-          setLocationContextError(
-            "Forecast endpoint is unavailable. Restart the backend to load /weather/location-context."
-          );
-        } else {
-          setLocationContextError("Forecast data is delayed right now.");
+        if (isForecastRateLimitError(error)) {
+          setLocationContextError("Forecast is temporarily rate-limited. Try again shortly.");
+          setLocationContextErrorTone("warning");
+          return;
         }
+
+        setLocationContextError("Forecast is temporarily unavailable.");
+        setLocationContextErrorTone("neutral");
       } finally {
         if (isMounted) setLocationContextLoading(false);
       }
@@ -819,7 +925,7 @@ export default function Home() {
       isMounted = false;
       window.clearInterval(refresh);
     };
-  }, [activeForecastTarget]);
+  }, [activeForecastTarget, isPageVisible]);
 
   useEffect(() => {
     const frameCount = locationContext?.map?.frames.length ?? 0;
@@ -835,6 +941,7 @@ export default function Home() {
       mobileTab !== "map" ||
       mobileMapPaused ||
       prefersReducedMotion ||
+      isClientForecastFallbackSource(locationContext?.source) ||
       frameCount < 2
     ) {
       return;
@@ -874,6 +981,24 @@ export default function Home() {
     locationContext?.map?.frames?.[mobileMapFrameIndex] ?? null;
   const shouldShowManualAreaPicker =
     manualAreaPickerOpen || (locationMode === "manual" && !mobileLocationTarget);
+  const usesClientForecastFallback = isClientForecastFallbackSource(
+    locationContext?.source
+  );
+  const forecastSourceNotice = usesClientForecastFallback
+    ? "Client fallback is active for local testing. Live map animation is paused."
+    : null;
+  const locationContextErrorClasses =
+    locationContextErrorTone === "warning"
+      ? "border-amber-200 bg-amber-50 text-amber-800"
+      : "border-slate-200/80 bg-white/82 text-slate-600";
+  const desktopForecastTitle =
+    desktopForecastTarget?.label || locationContext?.location.label || "Current location";
+  const desktopForecastCaption = desktopPinnedPreview
+    ? `${desktopPinnedPreview.name} pinned from the live sensor board.`
+    : desktopForecastTarget
+      ? "Using your current location."
+      : desktopLocationMessage ||
+        "Allow location access or click a live station below to pin its forecast.";
   const mobileHourlyChartData = useMemo(
     () =>
       (locationContext?.hourly_timeline ?? []).map((point) => ({
@@ -970,6 +1095,17 @@ export default function Home() {
 
   function resetMobileChartActiveIndex() {
     setMobileChartActiveIndex(defaultMobileChartIndex);
+  }
+
+  function resetDesktopForecastToCurrentLocation() {
+    setSelectedPreviewId(null);
+    if (desktopGpsCoords) {
+      setDesktopLocationState("ready");
+      setDesktopLocationMessage(null);
+      return;
+    }
+
+    setDesktopLocationRequestKey((current) => current + 1);
   }
 
   if (isMobileHome) {
@@ -1108,11 +1244,19 @@ export default function Home() {
                     <div className="ws-skeleton h-28 rounded-2xl" />
                   </div>
                 ) : locationContextError ? (
-                  <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                  <div
+                    className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${locationContextErrorClasses}`}
+                  >
                     {locationContextError}
                   </div>
                 ) : (
                   <>
+                    {forecastSourceNotice ? (
+                      <div className="mt-3 rounded-2xl border border-sky-200/80 bg-sky-50/80 px-4 py-3 text-xs text-sky-700">
+                        {forecastSourceNotice}
+                      </div>
+                    ) : null}
+
                     <div className="mt-3 flex items-end justify-between gap-3">
                       <div>
                         <p className="text-[2.35rem] font-semibold leading-none tracking-tight text-slate-950">
@@ -1360,8 +1504,7 @@ export default function Home() {
                           </div>
                         ) : (
                           <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 px-3 py-4 text-xs text-slate-500">
-                            Timeline data is unavailable right now. If you&apos;re testing locally,
-                            restart the backend and reload this page.
+                            Timeline data is unavailable right now.
                           </div>
                         )}
                       </div>
@@ -1393,43 +1536,59 @@ export default function Home() {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-slate-900">
-                      Animated local map
+                      {usesClientForecastFallback ? "Static local map" : "Animated local map"}
                     </p>
                     <p className="mt-1 text-xs text-slate-500">
-                      Wider 8km forecast field around {mobileLocationTarget?.label || "your area"}.
+                      {usesClientForecastFallback
+                        ? `Static radius around ${mobileLocationTarget?.label || "your area"} while live forecast fields are unavailable.`
+                        : `Wider 8km forecast field around ${mobileLocationTarget?.label || "your area"}.`}
                     </p>
                   </div>
-                  <span className="rounded-full border border-slate-200/70 bg-white/75 px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                    {currentLocationFrame?.label ?? "Waiting"}
-                  </span>
+                  {usesClientForecastFallback ? (
+                    <span className="rounded-full border border-sky-200/80 bg-sky-50/80 px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-sky-700">
+                      Static
+                    </span>
+                  ) : (
+                    <span className="rounded-full border border-slate-200/70 bg-white/75 px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
+                      {currentLocationFrame?.label ?? "Waiting"}
+                    </span>
+                  )}
                 </div>
 
-                <div className="grid grid-cols-2 rounded-2xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] text-xs overflow-hidden">
-                  <button
-                    type="button"
-                    onClick={() => setMobileMapLayer("precipitation")}
-                    className={[
-                      "py-2.5 text-center font-medium transition",
-                      mobileMapLayer === "precipitation"
-                        ? "bg-sky-600 text-white shadow-inner"
-                        : "text-slate-600 hover:bg-slate-100",
-                    ].join(" ")}
-                  >
-                    Precip
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMobileMapLayer("temperature")}
-                    className={[
-                      "py-2.5 text-center font-medium transition",
-                      mobileMapLayer === "temperature"
-                        ? "bg-sky-600 text-white shadow-inner"
-                        : "text-slate-600 hover:bg-slate-100",
-                    ].join(" ")}
-                  >
-                    Temperature
-                  </button>
-                </div>
+                {forecastSourceNotice ? (
+                  <div className="rounded-2xl border border-sky-200/80 bg-sky-50/80 px-4 py-3 text-xs text-sky-700">
+                    {forecastSourceNotice}
+                  </div>
+                ) : null}
+
+                {usesClientForecastFallback ? null : (
+                  <div className="grid grid-cols-2 rounded-2xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] text-xs overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setMobileMapLayer("precipitation")}
+                      className={[
+                        "py-2.5 text-center font-medium transition",
+                        mobileMapLayer === "precipitation"
+                          ? "bg-sky-600 text-white shadow-inner"
+                          : "text-slate-600 hover:bg-slate-100",
+                      ].join(" ")}
+                    >
+                      Precip
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMobileMapLayer("temperature")}
+                      className={[
+                        "py-2.5 text-center font-medium transition",
+                        mobileMapLayer === "temperature"
+                          ? "bg-sky-600 text-white shadow-inner"
+                          : "text-slate-600 hover:bg-slate-100",
+                      ].join(" ")}
+                    >
+                      Temperature
+                    </button>
+                  </div>
+                )}
 
                 <MobileLocationForecastMap
                   center={{
@@ -1443,23 +1602,30 @@ export default function Home() {
                   isClient={isClient}
                   loading={locationContextLoading}
                   error={locationContextError}
-                  onInteract={handleMapInteraction}
+                  staticFallback={usesClientForecastFallback}
+                  onInteract={usesClientForecastFallback ? undefined : handleMapInteraction}
                 />
 
-                <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200/75 bg-slate-50/75 px-4 py-3 text-xs text-slate-600">
-                  <span>
-                    {mobileMapPaused
-                      ? "Animation paused after interaction."
-                      : "Animation loops through the next 6 hours."}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => setMobileMapPaused((current) => !current)}
-                    className="font-medium text-slate-700 underline decoration-slate-300 underline-offset-2"
-                  >
-                    {mobileMapPaused ? "Resume" : "Pause"}
-                  </button>
-                </div>
+                {usesClientForecastFallback ? (
+                  <div className="rounded-2xl border border-slate-200/75 bg-slate-50/75 px-4 py-3 text-xs text-slate-600">
+                    Static local map while live forecast frames are unavailable.
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200/75 bg-slate-50/75 px-4 py-3 text-xs text-slate-600">
+                    <span>
+                      {mobileMapPaused
+                        ? "Animation paused after interaction."
+                        : "Animation loops through the next 6 hours."}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setMobileMapPaused((current) => !current)}
+                      className="font-medium text-slate-700 underline decoration-slate-300 underline-offset-2"
+                    >
+                      {mobileMapPaused ? "Resume" : "Pause"}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1572,22 +1738,33 @@ export default function Home() {
                   Pinned forecast
                 </p>
                 <p className="mt-1.5 truncate text-[1.95rem] font-semibold tracking-tight text-slate-950">
-                  {locationContext?.location.label ||
-                    desktopForecastTarget?.label ||
-                    "Choose a station"}
+                  {desktopForecastTitle}
                 </p>
                 <p className="mt-1 truncate text-[13px] text-slate-500">
-                  {desktopForecastPreview?.name ||
-                    "Click a live station below to keep the forecast anchored here."}
+                  {desktopForecastCaption}
                 </p>
               </div>
 
-              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600">
-                <CurrentLocationWeatherIcon className="h-5 w-5" />
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={resetDesktopForecastToCurrentLocation}
+                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-[var(--ws-border-subtle)] bg-white/86 text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.05)]"
+                  aria-label="Use my current location"
+                >
+                  <LocateFixed className="h-4.5 w-4.5" />
+                </button>
+                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600">
+                  <CurrentLocationWeatherIcon className="h-5 w-5" />
+                </span>
+              </div>
             </div>
 
-            {locationContextLoading && !locationContext ? (
+            {desktopLocationState === "locating" && !desktopForecastTarget ? (
+              <div className="mt-4 rounded-[1.25rem] border border-slate-200/80 bg-white/82 px-4 py-4 text-sm text-slate-600">
+                Requesting your current location…
+              </div>
+            ) : locationContextLoading && !locationContext ? (
               <div className="mt-4 space-y-3.5">
                 <div className="ws-skeleton h-11 w-36 rounded-2xl" />
                 <div className="grid grid-cols-2 gap-2.5 text-xs">
@@ -1599,14 +1776,23 @@ export default function Home() {
               </div>
             ) : !desktopForecastTarget ? (
               <div className="mt-4 rounded-[1.25rem] border border-slate-200/80 bg-white/82 px-4 py-4 text-sm text-slate-600">
-                Forecast context will appear here as soon as a mapped station is available.
+                {desktopLocationMessage ||
+                  "Allow location access or click a live station below to pin its forecast."}
               </div>
             ) : locationContextError ? (
-              <div className="mt-4 rounded-[1.25rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+              <div
+                className={`mt-4 rounded-[1.25rem] border px-4 py-3 text-sm ${locationContextErrorClasses}`}
+              >
                 {locationContextError}
               </div>
             ) : (
               <>
+                {forecastSourceNotice ? (
+                  <div className="mt-4 rounded-[1.25rem] border border-sky-200/80 bg-sky-50/80 px-4 py-3 text-xs text-sky-700">
+                    {forecastSourceNotice}
+                  </div>
+                ) : null}
+
                 <div className="mt-1 flex items-end justify-between gap-4">
                   <div>
                     <p className="text-[2.35rem] font-semibold leading-none tracking-tight text-slate-950">
@@ -1856,8 +2042,7 @@ export default function Home() {
                       </div>
                     ) : (
                       <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 px-3 py-4 text-xs text-slate-500">
-                        Timeline data is unavailable right now. If you&apos;re testing
-                        locally, restart the backend and reload this page.
+                        Timeline data is unavailable right now.
                       </div>
                     )}
                   </div>

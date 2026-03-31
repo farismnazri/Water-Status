@@ -69,24 +69,26 @@ export function MobileLocationForecastLeafletMap({
   samples,
   frame,
   layer,
+  staticFallback = false,
 }: {
   center: { latitude: number; longitude: number };
   radiusKm: number;
   samples: WeatherLocationMapSample[];
-  frame: WeatherLocationMapFrame;
+  frame: WeatherLocationMapFrame | null;
   layer: "precipitation" | "temperature";
+  staticFallback?: boolean;
 }) {
   const frameValuesById = useMemo(
     () =>
       new Map(
-        frame.samples.map((sample) => [
+        (frame?.samples ?? []).map((sample) => [
           sample.sample_id,
           layer === "precipitation"
             ? sample.precipitation_amount ?? null
             : sample.temperature_2m ?? null,
         ])
       ),
-    [frame.samples, layer]
+    [frame?.samples, layer]
   );
 
   const overlayRadius = Math.max(1800, radiusKm * 450);
@@ -107,26 +109,40 @@ export function MobileLocationForecastLeafletMap({
 
       <LocationMapBounds center={center} radiusKm={radiusKm} />
 
-      {samples.map((sample) => {
-        const value = frameValuesById.get(sample.id);
-        const color =
-          layer === "precipitation"
-            ? mapPrecipitationColor(value)
-            : mapTemperatureColor(value);
+      {staticFallback ? (
+        <Circle
+          center={[center.latitude, center.longitude]}
+          radius={Math.max(1200, radiusKm * 1000)}
+          pathOptions={{
+            color: "#0ea5e9",
+            fillColor: "#7dd3fc",
+            fillOpacity: 0.08,
+            weight: 2,
+            dashArray: "6 6",
+          }}
+        />
+      ) : (
+        samples.map((sample) => {
+          const value = frameValuesById.get(sample.id);
+          const color =
+            layer === "precipitation"
+              ? mapPrecipitationColor(value)
+              : mapTemperatureColor(value);
 
-        return (
-          <Circle
-            key={`${frame.label}-${sample.id}`}
-            center={[sample.latitude, sample.longitude]}
-            radius={overlayRadius}
-            pathOptions={{
-              stroke: false,
-              fillColor: color,
-              fillOpacity: sampleOpacity(value),
-            }}
-          />
-        );
-      })}
+          return (
+            <Circle
+              key={`${frame?.label ?? "frame"}-${sample.id}`}
+              center={[sample.latitude, sample.longitude]}
+              radius={overlayRadius}
+              pathOptions={{
+                stroke: false,
+                fillColor: color,
+                fillOpacity: sampleOpacity(value),
+              }}
+            />
+          );
+        })
+      )}
 
       <CircleMarker
         center={[center.latitude, center.longitude]}
