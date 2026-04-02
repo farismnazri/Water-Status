@@ -1,4 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  startTransition,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type TouchEvent as ReactTouchEvent,
+} from "react";
 import { Link } from "react-router";
 import {
   Waves,
@@ -7,19 +16,9 @@ import {
   ArrowRight,
   LocateFixed,
 } from "lucide-react";
-import {
-  Bar,
-  CartesianGrid,
-  ComposedChart,
-  Line,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from "recharts";
 import { API_BASE } from "../lib/api";
 import { HeroPreviewMap } from "../components/HeroPreviewMap";
+import { MobileDailySummaryCard } from "../components/MobileDailySummaryCard";
 import { MobileLocationForecastMap } from "../components/MobileLocationForecastMap";
 import ShinyText from "../components/ShinyText";
 import {
@@ -27,7 +26,6 @@ import {
   formatPercent,
   formatPrecipAmount,
   formatShortDate,
-  formatShortTime,
   formatTemperature,
   formatWind,
   getWeatherCodeMeta,
@@ -104,7 +102,19 @@ const previewSections = [
 const PREVIEW_REQUEST_TIMEOUT_MS = 4500;
 const LOCATION_CONTEXT_REFRESH_INTERVAL_MS = 60_000;
 const MOBILE_HOME_TAB_STORAGE_KEY = "wsMobileHomeTab";
-const MOBILE_HOME_MANUAL_AREA_STORAGE_KEY = "wsMobileHomeManualArea";
+const MOBILE_HOME_LOCATION_MODE_STORAGE_KEY = "wsMobileHomeLocationMode";
+const MOBILE_HOME_PREFERRED_AREA_STORAGE_KEY = "wsMobileHomePreferredArea";
+const LEGACY_MOBILE_HOME_MANUAL_AREA_STORAGE_KEY = "wsMobileHomeManualArea";
+const MOBILE_TAB_SWIPE_THRESHOLD_PX = 72;
+const MOBILE_TAB_SWIPE_INTENT_PX = 16;
+const MOBILE_TAB_SWIPE_INTENT_RATIO = 1.2;
+const MOBILE_TAB_EDGE_DAMPING = 0.35;
+
+const LazyForecastTimelineCard = lazy(() =>
+  import("../components/ForecastTimelineCard").then((module) => ({
+    default: module.ForecastTimelineCard,
+  }))
+);
 
 const fallbackPreviewItems: HomePreviewItem[] = [
   {
@@ -218,17 +228,6 @@ function precipitationLabel(value: number): string {
   if (value < 15) return "Steady precip";
   if (value < 30) return "Heavy precip";
   return "Very heavy precip";
-}
-
-function formatChartHourLabel(value: string | null | undefined): string {
-  if (!value) return "—";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed
-    .toLocaleTimeString([], {
-      hour: "numeric",
-    })
-    .replace(/\s/g, "");
 }
 
 function hasCoordinates(
@@ -363,7 +362,9 @@ function readStoredManualArea(): SensorLocationOption | null {
   if (typeof window === "undefined") return null;
 
   try {
-    const raw = window.localStorage.getItem(MOBILE_HOME_MANUAL_AREA_STORAGE_KEY);
+    const raw =
+      window.localStorage.getItem(MOBILE_HOME_PREFERRED_AREA_STORAGE_KEY) ||
+      window.localStorage.getItem(LEGACY_MOBILE_HOME_MANUAL_AREA_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     if (
@@ -385,10 +386,39 @@ function readStoredManualArea(): SensorLocationOption | null {
   }
 }
 
+function readStoredLocationMode(
+  hasStoredManualArea: boolean
+): "gps" | "manual" {
+  if (typeof window === "undefined") {
+    return hasStoredManualArea ? "manual" : "gps";
+  }
+
+  const raw = window.localStorage.getItem(MOBILE_HOME_LOCATION_MODE_STORAGE_KEY);
+  if (raw === "manual" && hasStoredManualArea) return "manual";
+  return "gps";
+}
+
 export default function Home() {
   const isClient = typeof window !== "undefined";
   const hasLoadedPreviewRef = useRef(false);
   const mapPauseTimeoutRef = useRef<number | null>(null);
+  const mobileTabSwipeRef = useRef<{
+    startX: number;
+    startY: number;
+    lastX: number;
+    lastY: number;
+    tracking: boolean;
+    horizontalIntent: boolean;
+  }>({
+    startX: 0,
+    startY: 0,
+    lastX: 0,
+    lastY: 0,
+    tracking: false,
+    horizontalIntent: false,
+  });
+  const [mobileTabDragOffsetPx, setMobileTabDragOffsetPx] = useState(0);
+  const [mobileTabIsDragging, setMobileTabIsDragging] = useState(false);
   const [previewItems, setPreviewItems] = useState<HomePreviewItem[]>([]);
   const [previewLoading, setPreviewLoading] = useState(true);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -417,7 +447,7 @@ export default function Home() {
   );
   const [manualAreaPickerOpen, setManualAreaPickerOpen] = useState(false);
   const [locationMode, setLocationMode] = useState<"gps" | "manual">(
-    manualArea ? "manual" : "gps"
+    readStoredLocationMode(Boolean(readStoredManualArea()))
   );
   const [gpsCoords, setGpsCoords] = useState<{
     latitude: number;
@@ -425,7 +455,12 @@ export default function Home() {
   } | null>(null);
   const [locationState, setLocationState] = useState<
     "idle" | "locating" | "ready" | "needs_manual"
-  >(manualArea ? "ready" : "idle");
+  >(
+    readStoredLocationMode(Boolean(readStoredManualArea())) === "manual" &&
+      readStoredManualArea()
+      ? "ready"
+      : "idle"
+  );
   const [locationMessage, setLocationMessage] = useState<string | null>(null);
   const [locationRequestKey, setLocationRequestKey] = useState(0);
   const [locationContext, setLocationContext] = useState<WeatherLocationContext | null>(
@@ -439,7 +474,6 @@ export default function Home() {
   const [mobileForecastMetric, setMobileForecastMetric] = useState<"rain" | "temperature">(
     "rain"
   );
-  const [mobileChartActiveIndex, setMobileChartActiveIndex] = useState<number | null>(null);
   const [mobileMapLayer, setMobileMapLayer] = useState<
     "precipitation" | "temperature"
   >("precipitation");
@@ -461,8 +495,12 @@ export default function Home() {
     if (!navigator.geolocation) {
       setLocationMode("manual");
       setLocationState(manualArea ? "ready" : "needs_manual");
-      setManualAreaPickerOpen(true);
-      setLocationMessage("Location access isn’t available here. Choose an area instead.");
+      setManualAreaPickerOpen(!manualArea);
+      setLocationMessage(
+        manualArea
+          ? "Location access isn’t available here. Showing your saved area instead."
+          : "Location access isn’t available here. Choose an area instead."
+      );
       return;
     }
 
@@ -484,11 +522,15 @@ export default function Home() {
         console.error(error);
         setLocationMode("manual");
         setLocationState(manualArea ? "ready" : "needs_manual");
-        setManualAreaPickerOpen(true);
+        setManualAreaPickerOpen(!manualArea);
         setLocationMessage(
           error.code === error.PERMISSION_DENIED
-            ? "Location access is off. Choose an area to keep the forecast local."
-            : "We couldn’t confirm your current location. Choose an area below."
+            ? manualArea
+              ? "Location access is off. Showing your saved area instead."
+              : "Location access is off. Choose an area to keep the forecast local."
+            : manualArea
+              ? "We couldn’t confirm your current location. Showing your saved area instead."
+              : "We couldn’t confirm your current location. Choose an area below."
         );
       },
       {
@@ -553,6 +595,134 @@ export default function Home() {
     }, 5000);
   }
 
+  function commitMobileTab(nextTab: MobileHomeTab) {
+    setMobileTabIsDragging(false);
+    setMobileTabDragOffsetPx(0);
+    startTransition(() => {
+      setMobileTab((current) => (current === nextTab ? current : nextTab));
+    });
+  }
+
+  function resetMobileTabTrack() {
+    setMobileTabIsDragging(false);
+    setMobileTabDragOffsetPx(0);
+  }
+
+  function resetMobileTabSwipe() {
+    mobileTabSwipeRef.current = {
+      startX: 0,
+      startY: 0,
+      lastX: 0,
+      lastY: 0,
+      tracking: false,
+      horizontalIntent: false,
+    };
+  }
+
+  function handleMobileModeSwipeStart(event: ReactTouchEvent<HTMLDivElement>) {
+    const touch = event.touches[0];
+    if (!touch) return;
+
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest(
+        '[data-no-mode-swipe="true"], button, a, input, select, textarea, [role="button"]'
+      )
+    ) {
+      resetMobileTabSwipe();
+      return;
+    }
+
+    mobileTabSwipeRef.current = {
+      startX: touch.clientX,
+      startY: touch.clientY,
+      lastX: touch.clientX,
+      lastY: touch.clientY,
+      tracking: true,
+      horizontalIntent: false,
+    };
+  }
+
+  function handleMobileModeSwipeMove(event: ReactTouchEvent<HTMLDivElement>) {
+    const touch = event.touches[0];
+    const swipe = mobileTabSwipeRef.current;
+    if (!touch || !swipe.tracking) return;
+
+    swipe.lastX = touch.clientX;
+    swipe.lastY = touch.clientY;
+
+    const deltaX = swipe.lastX - swipe.startX;
+    const deltaY = swipe.lastY - swipe.startY;
+    const absoluteDeltaX = Math.abs(deltaX);
+    const absoluteDeltaY = Math.abs(deltaY);
+
+    if (!swipe.horizontalIntent) {
+      if (
+        absoluteDeltaY >= MOBILE_TAB_SWIPE_INTENT_PX &&
+        absoluteDeltaY > absoluteDeltaX * MOBILE_TAB_SWIPE_INTENT_RATIO
+      ) {
+        resetMobileTabSwipe();
+        return;
+      }
+
+      if (
+        absoluteDeltaX >= MOBILE_TAB_SWIPE_INTENT_PX &&
+        absoluteDeltaX > absoluteDeltaY * MOBILE_TAB_SWIPE_INTENT_RATIO
+      ) {
+        swipe.horizontalIntent = true;
+        setMobileTabIsDragging(true);
+      }
+    }
+
+    if (swipe.horizontalIntent) {
+      let nextDragOffsetPx = deltaX;
+      if (
+        (mobileTab === "forecast" && nextDragOffsetPx > 0) ||
+        (mobileTab === "map" && nextDragOffsetPx < 0)
+      ) {
+        nextDragOffsetPx *= MOBILE_TAB_EDGE_DAMPING;
+      }
+
+      setMobileTabDragOffsetPx(nextDragOffsetPx);
+    }
+
+    if (swipe.horizontalIntent && event.cancelable) {
+      event.preventDefault();
+    }
+  }
+
+  function handleMobileModeSwipeEnd() {
+    const swipe = mobileTabSwipeRef.current;
+    if (!swipe.tracking || !swipe.horizontalIntent) {
+      resetMobileTabTrack();
+      resetMobileTabSwipe();
+      return;
+    }
+
+    const deltaX = swipe.lastX - swipe.startX;
+    const deltaY = swipe.lastY - swipe.startY;
+    const absoluteDeltaX = Math.abs(deltaX);
+    const absoluteDeltaY = Math.abs(deltaY);
+
+    if (
+      absoluteDeltaX >= MOBILE_TAB_SWIPE_THRESHOLD_PX &&
+      absoluteDeltaX > absoluteDeltaY * MOBILE_TAB_SWIPE_INTENT_RATIO
+    ) {
+      if (deltaX < 0 && mobileTab !== "map") {
+        commitMobileTab("map");
+      } else if (deltaX > 0 && mobileTab !== "forecast") {
+        commitMobileTab("forecast");
+      } else {
+        resetMobileTabTrack();
+      }
+    } else {
+      resetMobileTabTrack();
+    }
+
+    resetMobileTabSwipe();
+  }
+
   useEffect(() => {
     if (!isClient) return;
     window.localStorage.setItem(MOBILE_HOME_TAB_STORAGE_KEY, mobileTab);
@@ -560,16 +730,23 @@ export default function Home() {
 
   useEffect(() => {
     if (!isClient) return;
+    window.localStorage.setItem(MOBILE_HOME_LOCATION_MODE_STORAGE_KEY, locationMode);
+  }, [isClient, locationMode]);
+
+  useEffect(() => {
+    if (!isClient) return;
 
     if (manualArea) {
       window.localStorage.setItem(
-        MOBILE_HOME_MANUAL_AREA_STORAGE_KEY,
+        MOBILE_HOME_PREFERRED_AREA_STORAGE_KEY,
         JSON.stringify(manualArea)
       );
+      window.localStorage.removeItem(LEGACY_MOBILE_HOME_MANUAL_AREA_STORAGE_KEY);
       return;
     }
 
-    window.localStorage.removeItem(MOBILE_HOME_MANUAL_AREA_STORAGE_KEY);
+    window.localStorage.removeItem(MOBILE_HOME_PREFERRED_AREA_STORAGE_KEY);
+    window.localStorage.removeItem(LEGACY_MOBILE_HOME_MANUAL_AREA_STORAGE_KEY);
   }, [isClient, manualArea]);
 
   useEffect(() => {
@@ -605,13 +782,14 @@ export default function Home() {
   useEffect(() => {
     if (!isMobileHome) return;
 
-    if (locationMode === "manual" && manualArea) {
-      setLocationState("ready");
+    if (locationMode === "manual") {
+      setLocationState(manualArea ? "ready" : "needs_manual");
+      setManualAreaPickerOpen(!manualArea);
       return;
     }
 
     requestCurrentLocation();
-  }, [isMobileHome, locationRequestKey]);
+  }, [isMobileHome, locationMode, locationRequestKey, manualArea]);
 
   useEffect(() => {
     if (isMobileHome) return;
@@ -991,6 +1169,9 @@ export default function Home() {
     locationContextErrorTone === "warning"
       ? "border-amber-200 bg-amber-50 text-amber-800"
       : "border-slate-200/80 bg-white/82 text-slate-600";
+  const mobileLocationDisplayLabel =
+    mobileLocationTarget?.label || manualArea?.label || "Choose an area";
+  const selectedManualAreaLabel = manualArea?.label ?? "";
   const desktopForecastTitle =
     desktopForecastTarget?.label || locationContext?.location.label || "Current location";
   const desktopForecastCaption = desktopPinnedPreview
@@ -999,103 +1180,73 @@ export default function Home() {
       ? "Using your current location."
       : desktopLocationMessage ||
         "Allow location access or click a live station below to pin its forecast.";
-  const mobileHourlyChartData = useMemo(
-    () =>
-      (locationContext?.hourly_timeline ?? []).map((point) => ({
-        ...point,
-        display_label:
-          point.offset_hours === 0 ? "Now" : formatChartHourLabel(point.time || null),
-      })),
-    [locationContext]
+  const mobileTabTrackBaseTranslate = mobileTab === "forecast" ? "0%" : "-50%";
+  const mobileTabTrackTransform = mobileTabIsDragging
+    ? `translateX(calc(${mobileTabTrackBaseTranslate} + ${mobileTabDragOffsetPx}px))`
+    : `translateX(${mobileTabTrackBaseTranslate})`;
+  const mobileTabTrackTransition = mobileTabIsDragging || prefersReducedMotion
+    ? "none"
+    : "transform 320ms cubic-bezier(0.22, 1, 0.36, 1)";
+  const mobileForecastPanel = locationContextLoading && !locationContext ? (
+    <div className="space-y-3 rounded-[1.7rem] border border-[var(--ws-border-subtle)] bg-white/86 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
+      <div className="ws-skeleton h-5 w-28 rounded-full" />
+      <div className="ws-skeleton h-4 w-44 rounded-full" />
+      <div className="ws-skeleton h-52 rounded-[1.3rem]" />
+    </div>
+  ) : locationContextError ? (
+    <div
+      className={`rounded-[1.7rem] border px-4 py-4 text-sm shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${locationContextErrorClasses}`}
+    >
+      {locationContextError}
+    </div>
+  ) : (
+    <div className="space-y-3">
+      <Suspense
+        fallback={
+          <div className="space-y-3 rounded-[1.7rem] border border-[var(--ws-border-subtle)] bg-white/86 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
+            <div className="ws-skeleton h-5 w-28 rounded-full" />
+            <div className="ws-skeleton h-4 w-44 rounded-full" />
+            <div className="ws-skeleton h-52 rounded-[1.3rem]" />
+          </div>
+        }
+      >
+        <LazyForecastTimelineCard
+          data={locationContext?.hourly_timeline ?? []}
+          metric={mobileForecastMetric}
+          onMetricChange={setMobileForecastMetric}
+          variant="mobile"
+        />
+      </Suspense>
+
+      <p className="px-1 text-[11px] text-slate-500">
+        Updated{" "}
+        {formatShortDate(
+          locationContext?.generated_at || currentLocationSummary?.time || null
+        )}
+      </p>
+    </div>
   );
-  const mobileChartTickIndexes = useMemo(() => {
-    if (mobileHourlyChartData.length === 0) return new Set<number>();
-
-    const nowIndex = mobileHourlyChartData.findIndex((point) => point.offset_hours === 0);
-    const lastIndex = mobileHourlyChartData.length - 1;
-    const rawIndexes = [
-      0,
-      nowIndex >= 0 ? nowIndex - 3 : 3,
-      nowIndex >= 0 ? nowIndex : Math.floor(lastIndex / 2),
-      nowIndex >= 0 ? nowIndex + 3 : Math.max(lastIndex - 3, 0),
-      lastIndex,
-    ];
-
-    return new Set(
-      rawIndexes.filter((index) => index >= 0 && index <= lastIndex)
-    );
-  }, [mobileHourlyChartData]);
-  const defaultMobileChartIndex = useMemo(() => {
-    if (mobileHourlyChartData.length === 0) return null;
-    const nowIndex = mobileHourlyChartData.findIndex((point) => point.offset_hours === 0);
-    return nowIndex >= 0 ? nowIndex : 0;
-  }, [mobileHourlyChartData]);
-  const hasHourlyTimeline = mobileHourlyChartData.length > 0;
-  const hasRainSeries = mobileHourlyChartData.some(
-    (point) =>
-      Number.isFinite(point.precipitation_amount ?? Number.NaN) ||
-      Number.isFinite(point.precipitation_probability ?? Number.NaN)
+  const mobileMapPanel = (
+    <MobileLocationForecastMap
+      center={{
+        latitude: mobileLocationTarget?.latitude ?? 3.1563,
+        longitude: mobileLocationTarget?.longitude ?? 101.7117,
+      }}
+      radiusKm={locationContext?.map?.radius_km ?? 8}
+      samples={locationContext?.map?.samples ?? []}
+      frames={locationContext?.map?.frames ?? []}
+      frame={currentLocationFrame}
+      layer={mobileMapLayer}
+      isClient={isClient}
+      loading={locationContextLoading}
+      error={locationContextError}
+      staticFallback={usesClientForecastFallback}
+      paused={mobileMapPaused}
+      onPausedChange={setMobileMapPaused}
+      onLayerChange={setMobileMapLayer}
+      onInteract={usesClientForecastFallback ? undefined : handleMapInteraction}
+    />
   );
-  const hasTemperatureSeries = mobileHourlyChartData.some((point) =>
-    Number.isFinite(point.temperature_2m ?? Number.NaN)
-  );
-  const mobileActiveChartPoint =
-    mobileChartActiveIndex !== null
-      ? mobileHourlyChartData[mobileChartActiveIndex] ?? null
-      : null;
-  const mobileChartReadout = useMemo(() => {
-    if (!mobileActiveChartPoint) return null;
-
-    const timeLabel =
-      mobileActiveChartPoint.offset_hours === 0
-        ? "Now"
-        : formatShortTime(mobileActiveChartPoint.time || null);
-
-    if (mobileForecastMetric === "temperature") {
-      return [
-        timeLabel,
-        formatTemperature(mobileActiveChartPoint.temperature_2m),
-      ].join(" • ");
-    }
-
-    return [
-      timeLabel,
-      formatPrecipAmount(mobileActiveChartPoint.precipitation_amount),
-      formatPercent(mobileActiveChartPoint.precipitation_probability),
-    ].join(" • ");
-  }, [mobileActiveChartPoint, mobileForecastMetric]);
-
-  useEffect(() => {
-    setMobileChartActiveIndex((current) => {
-      if (!hasHourlyTimeline || defaultMobileChartIndex === null) {
-        return null;
-      }
-      if (current !== null && current >= 0 && current < mobileHourlyChartData.length) {
-        return current;
-      }
-      return defaultMobileChartIndex;
-    });
-  }, [defaultMobileChartIndex, hasHourlyTimeline, mobileHourlyChartData.length]);
-
-  function updateMobileChartActiveIndex(
-    nextState: { activeTooltipIndex?: number | string | null } | undefined
-  ) {
-    const nextIndex = nextState?.activeTooltipIndex;
-    const normalizedIndex =
-      typeof nextIndex === "number"
-        ? nextIndex
-        : typeof nextIndex === "string"
-          ? Number(nextIndex)
-          : Number.NaN;
-
-    if (Number.isInteger(normalizedIndex) && normalizedIndex >= 0) {
-      setMobileChartActiveIndex(normalizedIndex);
-    }
-  }
-
-  function resetMobileChartActiveIndex() {
-    setMobileChartActiveIndex(defaultMobileChartIndex);
-  }
 
   function resetDesktopForecastToCurrentLocation() {
     setSelectedPreviewId(null);
@@ -1113,547 +1264,108 @@ export default function Home() {
       <main className="min-h-screen">
         <section className="mx-auto max-w-5xl px-4 pb-6 pt-2">
           <div className="space-y-3">
-            <div className="overflow-hidden">
-              <ShinyText
-                text="Stop guessing. Start seeing."
-                speed={3}
-                delay={0.55}
-                color="#59aaf7"
-                shineColor="#b8ddff"
-                spread={100}
-                direction="left"
-                yoyo={false}
-                pauseOnHover={false}
-                disabled={shouldToneDownMotion}
-                className="block overflow-visible whitespace-nowrap pb-[0.04em] text-[1.58rem] font-semibold leading-none tracking-[-0.06em] sm:text-[1.72rem]"
-              />
-            </div>
+            <MobileDailySummaryCard
+              CurrentLocationWeatherIcon={CurrentLocationWeatherIcon}
+              displayLocationLabel={mobileLocationDisplayLabel}
+              error={locationContextError}
+              errorClasses={locationContextErrorClasses}
+              feelsLikeLabel={formatTemperature(
+                currentLocationSummary?.apparent_temperature
+              )}
+              forecastSourceNotice={forecastSourceNotice}
+              isLoading={locationContextLoading && !locationContext}
+              locationMessage={locationMessage}
+              locationMode={locationMode}
+              locationOptions={locationOptions}
+              next6hPrecipLabel={formatPercent(
+                currentLocationNext6h?.max_precipitation_probability
+              )}
+              next6hPrecipSumLabel={formatPrecipAmount(currentLocationNext6h?.rain_sum)}
+              onClosePicker={() => setManualAreaPickerOpen(false)}
+              onEnableGps={() => {
+                setLocationMode("gps");
+                setManualAreaPickerOpen(false);
+                setLocationRequestKey((current) => current + 1);
+              }}
+              onSelectManualArea={(nextArea) => {
+                setManualArea(nextArea);
+                setLocationMode("manual");
+                setLocationState(nextArea ? "ready" : "needs_manual");
+                setLocationMessage(null);
+                if (nextArea) {
+                  setManualAreaPickerOpen(false);
+                }
+              }}
+              onSelectManualMode={() => {
+                setLocationMode("manual");
+                setLocationState(manualArea ? "ready" : "needs_manual");
+                setLocationMessage(null);
+              }}
+              onTogglePicker={() => setManualAreaPickerOpen((current) => !current)}
+              pickerOpen={shouldShowManualAreaPicker}
+              selectedLocationLabel={selectedManualAreaLabel}
+              shouldToneDownMotion={shouldToneDownMotion}
+              temperatureLabel={formatTemperature(currentLocationSummary?.temperature_2m)}
+              todayHighLowLabel={`${formatTemperature(
+                currentLocationDaily?.temperature_2m_max
+              )} / ${formatTemperature(currentLocationDaily?.temperature_2m_min)}`}
+              weatherLabel={currentLocationWeatherMeta.label}
+              windLabel={formatWind(currentLocationSummary?.wind_speed_10m)}
+            />
 
-            {locationMessage ? (
-              <div className="rounded-2xl border border-slate-200/80 bg-white/80 px-4 py-3 text-xs text-slate-600">
-                {locationMessage}
-              </div>
-            ) : null}
-
-            {mobileTab === "forecast" ? (
-              <div className="rounded-[1.7rem] border border-[var(--ws-border-subtle)] bg-white/86 p-3 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="truncate text-[1.55rem] font-semibold tracking-tight text-slate-900 sm:text-[1.75rem]">
-                      {mobileLocationTarget?.label || "Choose an area"}
-                    </p>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setManualAreaPickerOpen((current) => !current)}
-                      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--ws-border-subtle)] bg-white/86 text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.05)]"
-                      aria-label="Change location source"
-                    >
-                      <LocateFixed className="h-4 w-4" />
-                    </button>
-                    <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600">
-                      <CurrentLocationWeatherIcon className="h-5 w-5" />
-                    </span>
-                  </div>
-                </div>
-
-                {shouldShowManualAreaPicker ? (
-                  <div className="mt-3 rounded-[1.2rem] border border-[var(--ws-border-subtle)] bg-white/82 p-3 shadow-[0_14px_28px_rgba(15,23,42,0.05)]">
-                    <div className="grid grid-cols-2 rounded-2xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] text-xs overflow-hidden">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setLocationMode("gps");
-                          setManualAreaPickerOpen(false);
-                          setLocationRequestKey((current) => current + 1);
-                        }}
-                        className={[
-                          "inline-flex items-center justify-center gap-2 py-2 text-center font-medium transition",
-                          locationMode === "gps"
-                            ? "bg-sky-600 text-white shadow-inner"
-                            : "text-slate-600 hover:bg-slate-100",
-                        ].join(" ")}
-                      >
-                        <LocateFixed className="h-3.5 w-3.5" />
-                        Auto
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setLocationMode("manual");
-                          setLocationMessage(null);
-                        }}
-                        className={[
-                          "py-2 text-center font-medium transition",
-                          locationMode === "manual"
-                            ? "bg-sky-600 text-white shadow-inner"
-                            : "text-slate-600 hover:bg-slate-100",
-                        ].join(" ")}
-                      >
-                        Choose
-                      </button>
-                    </div>
-
-                    {locationMode === "manual" ? (
-                      <div className="mt-2.5 flex items-center gap-2">
-                        <select
-                          value={manualArea?.label ?? ""}
-                          onChange={(event) => {
-                            const nextArea =
-                              locationOptions.find((option) => option.label === event.target.value) ??
-                              null;
-                            setManualArea(nextArea);
-                            setLocationMode("manual");
-                            setLocationState(nextArea ? "ready" : "needs_manual");
-                            setLocationMessage(null);
-                            if (nextArea) {
-                              setManualAreaPickerOpen(false);
-                            }
-                          }}
-                          className="min-w-0 flex-1 rounded-2xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] px-3 py-2 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-300"
-                        >
-                          <option value="">Select a nearby area…</option>
-                          {locationOptions.map((option) => (
-                            <option key={option.id} value={option.label}>
-                              {option.label}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          onClick={() => setManualAreaPickerOpen(false)}
-                          className="rounded-2xl border border-[var(--ws-border-subtle)] px-3 py-2 text-xs font-medium text-slate-600"
-                        >
-                          Done
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                ) : null}
-
-                {locationContextLoading && !locationContext ? (
-                  <div className="mt-4 space-y-3">
-                    <div className="ws-skeleton h-10 w-32 rounded-2xl" />
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="ws-skeleton h-16 rounded-2xl" />
-                      <div className="ws-skeleton h-16 rounded-2xl" />
-                      <div className="ws-skeleton col-span-2 h-16 rounded-2xl" />
-                    </div>
-                    <div className="ws-skeleton h-28 rounded-2xl" />
-                  </div>
-                ) : locationContextError ? (
-                  <div
-                    className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${locationContextErrorClasses}`}
-                  >
-                    {locationContextError}
-                  </div>
-                ) : (
-                  <>
-                    {forecastSourceNotice ? (
-                      <div className="mt-3 rounded-2xl border border-sky-200/80 bg-sky-50/80 px-4 py-3 text-xs text-sky-700">
-                        {forecastSourceNotice}
-                      </div>
-                    ) : null}
-
-                    <div className="mt-3 flex items-end justify-between gap-3">
-                      <div>
-                        <p className="text-[2.35rem] font-semibold leading-none tracking-tight text-slate-950">
-                          {formatTemperature(currentLocationSummary?.temperature_2m)}
-                        </p>
-                        <p className="mt-1 text-sm text-slate-500">
-                          Feels like {formatTemperature(currentLocationSummary?.apparent_temperature)}
-                        </p>
-                      </div>
-
-                      <div className="text-right">
-                        <p className="text-[15px] font-medium text-slate-700">
-                          {currentLocationWeatherMeta.label}
-                        </p>
-                        <p className="mt-1 text-[15px] text-slate-500">
-                          Wind {formatWind(currentLocationSummary?.wind_speed_10m)}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                      <div className="rounded-[1.2rem] border border-slate-200/80 bg-slate-50/80 px-3.5 py-3">
-                        <p className="text-slate-500">Next 6h precip</p>
-                        <p className="mt-1 text-lg font-semibold text-slate-900">
-                          {formatPercent(currentLocationNext6h?.max_precipitation_probability)}
-                        </p>
-                      </div>
-
-                      <div className="rounded-[1.2rem] border border-slate-200/80 bg-slate-50/80 px-3.5 py-3">
-                        <p className="text-slate-500">Today high / low</p>
-                        <p className="mt-1 text-[15px] font-semibold text-slate-900">
-                          {formatTemperature(currentLocationDaily?.temperature_2m_max)} /{" "}
-                          {formatTemperature(currentLocationDaily?.temperature_2m_min)}
-                        </p>
-                      </div>
-
-                      <div className="col-span-2 rounded-[1.2rem] border border-slate-200/80 bg-slate-50/80 px-3.5 py-3">
-                        <p className="text-slate-500">Next 6h precip sum</p>
-                        <p className="mt-1 text-[15px] font-semibold text-slate-900">
-                          {formatPrecipAmount(currentLocationNext6h?.rain_sum)}
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="mt-3 rounded-[1.2rem] border border-[var(--ws-border-subtle)] bg-[linear-gradient(180deg,rgba(240,249,255,0.7),rgba(255,255,255,0.78))] px-3 py-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                            {mobileForecastMetric === "rain" ? "Precip 12h" : "Temp 12h"}
-                          </p>
-                          <p className="mt-1 text-[11px] text-slate-500">
-                            6h back and 6h ahead, in 1-hour steps.
-                          </p>
-                        </div>
-                        <div className="grid grid-cols-2 rounded-full border border-[var(--ws-border-subtle)] bg-white/80 text-[11px] overflow-hidden">
-                          <button
-                            type="button"
-                            onClick={() => setMobileForecastMetric("rain")}
-                            className={[
-                              "px-3 py-1.5 font-medium transition",
-                              mobileForecastMetric === "rain"
-                                ? "bg-sky-600 text-white"
-                                : "text-slate-600",
-                            ].join(" ")}
-                          >
-                            Precip
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setMobileForecastMetric("temperature")}
-                            className={[
-                              "px-3 py-1.5 font-medium transition",
-                              mobileForecastMetric === "temperature"
-                                ? "bg-sky-600 text-white"
-                                : "text-slate-600",
-                            ].join(" ")}
-                          >
-                            Temp
-                          </button>
-                        </div>
-                      </div>
-
-                      <div className="mt-3">
-                        {hasHourlyTimeline ? (
-                          <div className="space-y-2">
-                            <div className="inline-flex min-h-8 items-center rounded-full border border-slate-200/80 bg-white/88 px-3 py-1.5 text-[11px] font-medium text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.06)] tabular-nums">
-                              {mobileChartReadout}
-                            </div>
-
-                            <div className="h-36">
-                            <ResponsiveContainer width="100%" height="100%">
-                              <ComposedChart
-                                data={mobileHourlyChartData}
-                                margin={{ top: 12, right: 2, left: -10, bottom: 20 }}
-                                onMouseMove={updateMobileChartActiveIndex}
-                                onMouseLeave={resetMobileChartActiveIndex}
-                                onTouchStart={updateMobileChartActiveIndex}
-                                onTouchMove={updateMobileChartActiveIndex}
-                                onClick={updateMobileChartActiveIndex}
-                              >
-                                <CartesianGrid
-                                  stroke="#dbeafe"
-                                  strokeDasharray="3 3"
-                                  vertical={false}
-                                />
-                                <XAxis
-                                  dataKey="display_label"
-                                  tickLine
-                                  axisLine
-                                  fontSize={10}
-                                  tick={{ fill: "#64748b" }}
-                                  tickMargin={8}
-                                  interval={0}
-                                  height={38}
-                                  tickFormatter={(value, index) =>
-                                    mobileChartTickIndexes.has(index) ? value : ""
-                                  }
-                                  label={{
-                                    value: "Time",
-                                    position: "insideBottom",
-                                    offset: -12,
-                                    fill: "#64748b",
-                                    fontSize: 11,
-                                  }}
-                                />
-                                <YAxis
-                                  yAxisId="left"
-                                  tickLine
-                                  axisLine
-                                  width={34}
-                                  fontSize={10}
-                                  tick={{ fill: "#64748b" }}
-                                  tickFormatter={(value) =>
-                                    mobileForecastMetric === "rain" ? `${value}` : `${value}°`
-                                  }
-                                  domain={
-                                    mobileForecastMetric === "rain"
-                                      ? [0, (dataMax: number) => Math.max(1, Math.ceil(dataMax || 0))]
-                                      : ["auto", "auto"]
-                                  }
-                                  label={{
-                                    value: mobileForecastMetric === "rain" ? "mm/h" : "°C",
-                                    angle: -90,
-                                    position: "insideLeft",
-                                    fill: "#64748b",
-                                    fontSize: 11,
-                                    dx: -2,
-                                  }}
-                                />
-                                <YAxis
-                                  yAxisId="probability"
-                                  orientation="right"
-                                  domain={[0, 100]}
-                                  tickFormatter={(value) => `${value}%`}
-                                  tickLine={mobileForecastMetric === "rain"}
-                                  axisLine={mobileForecastMetric === "rain"}
-                                  tick={mobileForecastMetric === "rain" ? { fill: "#64748b" } : false}
-                                  hide={mobileForecastMetric !== "rain"}
-                                  width={38}
-                                  fontSize={10}
-                                  label={
-                                    mobileForecastMetric === "rain"
-                                      ? {
-                                          value: "%",
-                                          angle: 90,
-                                          position: "insideRight",
-                                          fill: "#64748b",
-                                          fontSize: 11,
-                                          dx: 2,
-                                        }
-                                      : undefined
-                                  }
-                                />
-                                <ReferenceLine
-                                  x="Now"
-                                  stroke="#0ea5e9"
-                                  strokeDasharray="4 3"
-                                  ifOverflow="extendDomain"
-                                  label={{
-                                    value: "Now",
-                                    position: "insideTopRight",
-                                    fill: "#0369a1",
-                                    fontSize: 10,
-                                  }}
-                                />
-                                {mobileActiveChartPoint ? (
-                                  <ReferenceLine
-                                    x={mobileActiveChartPoint.display_label}
-                                    stroke="#94a3b8"
-                                    strokeWidth={1}
-                                    ifOverflow="extendDomain"
-                                  />
-                                ) : null}
-                                <Tooltip
-                                  content={() => null}
-                                  cursor={false}
-                                />
-                                {mobileForecastMetric === "rain" ? (
-                                  <>
-                                    <Bar
-                                      yAxisId="left"
-                                      dataKey="precipitation_amount"
-                                      name="Precip amount"
-                                      fill="#38bdf8"
-                                      radius={[10, 10, 0, 0]}
-                                      barSize={12}
-                                      minPointSize={4}
-                                      activeBar={{
-                                        fill: "#0ea5e9",
-                                        stroke: "#0369a1",
-                                        strokeWidth: 1,
-                                      }}
-                                      isAnimationActive={false}
-                                    />
-                                    <Line
-                                      yAxisId="probability"
-                                      dataKey="precipitation_probability"
-                                      name="Precip chance"
-                                      type="monotone"
-                                      stroke="#0f172a"
-                                      strokeWidth={2}
-                                      dot={{ r: 3.5, fill: "#0f172a" }}
-                                      activeDot={{ r: 5, fill: "#0f172a" }}
-                                      connectNulls
-                                      isAnimationActive={false}
-                                    />
-                                  </>
-                                ) : (
-                                  <Line
-                                    yAxisId="left"
-                                    dataKey="temperature_2m"
-                                      name="Temperature"
-                                      type="monotone"
-                                      stroke="#f97316"
-                                      strokeWidth={2.5}
-                                      dot={{ r: 3.5, fill: "#f97316" }}
-                                      activeDot={{ r: 5.5, fill: "#f97316" }}
-                                      connectNulls
-                                      isAnimationActive={false}
-                                    />
-                                )}
-                              </ComposedChart>
-                            </ResponsiveContainer>
-                          </div>
-                          </div>
-                        ) : (
-                          <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 px-3 py-4 text-xs text-slate-500">
-                            Timeline data is unavailable right now.
-                          </div>
-                        )}
-                      </div>
-
-                      {hasHourlyTimeline &&
-                      mobileForecastMetric === "rain" &&
-                      !hasRainSeries ? (
-                        <p className="mt-2 text-[11px] text-slate-500">
-                          No precipitation is expected across this 12-hour window.
-                        </p>
-                      ) : null}
-                      {hasHourlyTimeline &&
-                      mobileForecastMetric === "temperature" &&
-                      !hasTemperatureSeries ? (
-                        <p className="mt-2 text-[11px] text-slate-500">
-                          Temperature forecast is unavailable for this 12-hour window.
-                        </p>
-                      ) : null}
-                    </div>
-
-                    <p className="mt-3 text-[11px] text-slate-500">
-                      Updated {formatShortDate(locationContext?.generated_at || currentLocationSummary?.time || null)}
-                    </p>
-                  </>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-3 rounded-[1.8rem] border border-[var(--ws-border-subtle)] bg-white/86 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900">
-                      {usesClientForecastFallback ? "Static local map" : "Animated local map"}
-                    </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {usesClientForecastFallback
-                        ? `Static radius around ${mobileLocationTarget?.label || "your area"} while live forecast fields are unavailable.`
-                        : `Wider 8km forecast field around ${mobileLocationTarget?.label || "your area"}.`}
-                    </p>
-                  </div>
-                  {usesClientForecastFallback ? (
-                    <span className="rounded-full border border-sky-200/80 bg-sky-50/80 px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-sky-700">
-                      Static
-                    </span>
-                  ) : (
-                    <span className="rounded-full border border-slate-200/70 bg-white/75 px-3 py-1 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-                      {currentLocationFrame?.label ?? "Waiting"}
-                    </span>
-                  )}
-                </div>
-
-                {forecastSourceNotice ? (
-                  <div className="rounded-2xl border border-sky-200/80 bg-sky-50/80 px-4 py-3 text-xs text-sky-700">
-                    {forecastSourceNotice}
-                  </div>
-                ) : null}
-
-                {usesClientForecastFallback ? null : (
-                  <div className="grid grid-cols-2 rounded-2xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] text-xs overflow-hidden">
-                    <button
-                      type="button"
-                      onClick={() => setMobileMapLayer("precipitation")}
-                      className={[
-                        "py-2.5 text-center font-medium transition",
-                        mobileMapLayer === "precipitation"
-                          ? "bg-sky-600 text-white shadow-inner"
-                          : "text-slate-600 hover:bg-slate-100",
-                      ].join(" ")}
-                    >
-                      Precip
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setMobileMapLayer("temperature")}
-                      className={[
-                        "py-2.5 text-center font-medium transition",
-                        mobileMapLayer === "temperature"
-                          ? "bg-sky-600 text-white shadow-inner"
-                          : "text-slate-600 hover:bg-slate-100",
-                      ].join(" ")}
-                    >
-                      Temperature
-                    </button>
-                  </div>
-                )}
-
-                <MobileLocationForecastMap
-                  center={{
-                    latitude: mobileLocationTarget?.latitude ?? 3.1563,
-                    longitude: mobileLocationTarget?.longitude ?? 101.7117,
+            <div
+              className="space-y-3"
+              style={{ touchAction: "pan-y" }}
+            >
+              <div
+                className="overflow-hidden"
+                style={{ touchAction: "pan-y" }}
+                onTouchStart={handleMobileModeSwipeStart}
+                onTouchMove={handleMobileModeSwipeMove}
+                onTouchEnd={handleMobileModeSwipeEnd}
+                onTouchCancel={() => {
+                  resetMobileTabTrack();
+                  resetMobileTabSwipe();
+                }}
+              >
+                <div
+                  className="flex w-[200%] will-change-transform"
+                  style={{
+                    transform: mobileTabTrackTransform,
+                    transition: mobileTabTrackTransition,
                   }}
-                  radiusKm={locationContext?.map?.radius_km ?? 8}
-                  samples={locationContext?.map?.samples ?? []}
-                  frame={currentLocationFrame}
-                  layer={mobileMapLayer}
-                  isClient={isClient}
-                  loading={locationContextLoading}
-                  error={locationContextError}
-                  staticFallback={usesClientForecastFallback}
-                  onInteract={usesClientForecastFallback ? undefined : handleMapInteraction}
-                />
-
-                {usesClientForecastFallback ? (
-                  <div className="rounded-2xl border border-slate-200/75 bg-slate-50/75 px-4 py-3 text-xs text-slate-600">
-                    Static local map while live forecast frames are unavailable.
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200/75 bg-slate-50/75 px-4 py-3 text-xs text-slate-600">
-                    <span>
-                      {mobileMapPaused
-                        ? "Animation paused after interaction."
-                        : "Animation loops through the next 6 hours."}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setMobileMapPaused((current) => !current)}
-                      className="font-medium text-slate-700 underline decoration-slate-300 underline-offset-2"
-                    >
-                      {mobileMapPaused ? "Resume" : "Pause"}
-                    </button>
-                  </div>
-                )}
+                >
+                  <div className="w-1/2 shrink-0">{mobileForecastPanel}</div>
+                  <div className="w-1/2 shrink-0">{mobileMapPanel}</div>
+                </div>
               </div>
-            )}
 
-            <div className="grid grid-cols-2 rounded-2xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] text-xs overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setMobileTab("forecast")}
-                className={[
-                  "py-2.5 text-center font-medium transition",
-                  mobileTab === "forecast"
-                    ? "bg-sky-600 text-white shadow-inner"
-                    : "text-slate-600 hover:bg-slate-100",
-                ].join(" ")}
-              >
-                Forecast
-              </button>
-              <button
-                type="button"
-                onClick={() => setMobileTab("map")}
-                className={[
-                  "py-2.5 text-center font-medium transition",
-                  mobileTab === "map"
-                    ? "bg-sky-600 text-white shadow-inner"
-                    : "text-slate-600 hover:bg-slate-100",
-                ].join(" ")}
-              >
-                Local map
-              </button>
+              <div className="grid grid-cols-2 overflow-hidden rounded-2xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] text-xs">
+                <button
+                  type="button"
+                  onClick={() => commitMobileTab("forecast")}
+                  className={[
+                    "py-2.5 text-center font-medium transition-colors",
+                    mobileTab === "forecast"
+                      ? "bg-sky-600 text-white shadow-inner"
+                      : "text-slate-600 hover:bg-slate-100",
+                  ].join(" ")}
+                >
+                  Forecast
+                </button>
+                <button
+                  type="button"
+                  onClick={() => commitMobileTab("map")}
+                  className={[
+                    "py-2.5 text-center font-medium transition-colors",
+                    mobileTab === "map"
+                      ? "bg-sky-600 text-white shadow-inner"
+                      : "text-slate-600 hover:bg-slate-100",
+                  ].join(" ")}
+                >
+                  Local map
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -1837,230 +1549,23 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="mt-9 rounded-[1.25rem] border border-[var(--ws-border-subtle)] bg-[linear-gradient(180deg,rgba(240,249,255,0.7),rgba(255,255,255,0.8))] px-3.5 py-1">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-                        {mobileForecastMetric === "rain" ? "Precip 12h" : "Temp 12h"}
-                      </p>
-                      <p className="mt-1 text-[11px] text-slate-500">
-                        6h back and 6h ahead, in 1-hour steps.
-                      </p>
-                    </div>
-
-                    <div className="grid grid-cols-2 overflow-hidden rounded-full border border-[var(--ws-border-subtle)] bg-white/82 text-[11px]">
-                      <button
-                        type="button"
-                        onClick={() => setMobileForecastMetric("rain")}
-                        className={[
-                          "px-3 py-1.25 font-medium transition",
-                          mobileForecastMetric === "rain"
-                            ? "bg-sky-600 text-white"
-                            : "text-slate-600",
-                        ].join(" ")}
-                      >
-                        Precip
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setMobileForecastMetric("temperature")}
-                        className={[
-                          "px-3 py-1.25 font-medium transition",
-                          mobileForecastMetric === "temperature"
-                            ? "bg-sky-600 text-white"
-                            : "text-slate-600",
-                        ].join(" ")}
-                      >
-                        Temp
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="mt-2.5">
-                    {hasHourlyTimeline ? (
-                      <div className="space-y-2.5">
-                        <div className="inline-flex min-h-8 items-center rounded-full border border-slate-200/80 bg-white/88 px-3 py-1.5 text-[11px] font-medium text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.06)] tabular-nums">
-                          {mobileChartReadout}
-                        </div>
-
-                        <div className="h-40">
-                          <ResponsiveContainer width="100%" height="100%">
-                            <ComposedChart
-                              data={mobileHourlyChartData}
-                              margin={{ top: 12, right: 2, left: -8, bottom: 20 }}
-                              onMouseMove={updateMobileChartActiveIndex}
-                              onMouseLeave={resetMobileChartActiveIndex}
-                              onTouchStart={updateMobileChartActiveIndex}
-                              onTouchMove={updateMobileChartActiveIndex}
-                              onClick={updateMobileChartActiveIndex}
-                            >
-                              <CartesianGrid
-                                stroke="#dbeafe"
-                                strokeDasharray="3 3"
-                                vertical={false}
-                              />
-                              <XAxis
-                                dataKey="display_label"
-                                tickLine
-                                axisLine
-                                fontSize={10}
-                                tick={{ fill: "#64748b" }}
-                                tickMargin={8}
-                                interval={0}
-                                height={38}
-                                tickFormatter={(value, index) =>
-                                  mobileChartTickIndexes.has(index) ? value : ""
-                                }
-                                label={{
-                                  value: "Time",
-                                  position: "insideBottom",
-                                  offset: -12,
-                                  fill: "#64748b",
-                                  fontSize: 11,
-                                }}
-                              />
-                              <YAxis
-                                yAxisId="left"
-                                tickLine
-                                axisLine
-                                width={34}
-                                fontSize={10}
-                                tick={{ fill: "#64748b" }}
-                                tickFormatter={(value) =>
-                                  mobileForecastMetric === "rain" ? `${value}` : `${value}°`
-                                }
-                                domain={
-                                  mobileForecastMetric === "rain"
-                                    ? [0, (dataMax: number) => Math.max(1, Math.ceil(dataMax || 0))]
-                                    : ["auto", "auto"]
-                                }
-                                label={{
-                                  value: mobileForecastMetric === "rain" ? "mm/h" : "°C",
-                                  angle: -90,
-                                  position: "insideLeft",
-                                  fill: "#64748b",
-                                  fontSize: 11,
-                                  dx: -2,
-                                }}
-                              />
-                              <YAxis
-                                yAxisId="probability"
-                                orientation="right"
-                                domain={[0, 100]}
-                                tickFormatter={(value) => `${value}%`}
-                                tickLine={mobileForecastMetric === "rain"}
-                                axisLine={mobileForecastMetric === "rain"}
-                                tick={
-                                  mobileForecastMetric === "rain"
-                                    ? { fill: "#64748b" }
-                                    : false
-                                }
-                                hide={mobileForecastMetric !== "rain"}
-                                width={38}
-                                fontSize={10}
-                                label={
-                                  mobileForecastMetric === "rain"
-                                    ? {
-                                        value: "%",
-                                        angle: 90,
-                                        position: "insideRight",
-                                        fill: "#64748b",
-                                        fontSize: 11,
-                                        dx: 2,
-                                      }
-                                    : undefined
-                                }
-                              />
-                              <ReferenceLine
-                                x="Now"
-                                stroke="#0ea5e9"
-                                strokeDasharray="4 3"
-                                ifOverflow="extendDomain"
-                                label={{
-                                  value: "Now",
-                                  position: "insideTopRight",
-                                  fill: "#0369a1",
-                                  fontSize: 10,
-                                }}
-                              />
-                              {mobileActiveChartPoint ? (
-                                <ReferenceLine
-                                  x={mobileActiveChartPoint.display_label}
-                                  stroke="#94a3b8"
-                                  strokeWidth={1}
-                                  ifOverflow="extendDomain"
-                                />
-                              ) : null}
-                              <Tooltip content={() => null} cursor={false} />
-                              {mobileForecastMetric === "rain" ? (
-                                <>
-                                  <Bar
-                                    yAxisId="left"
-                                    dataKey="precipitation_amount"
-                                    name="Precip amount"
-                                    fill="#38bdf8"
-                                    radius={[10, 10, 0, 0]}
-                                    barSize={14}
-                                    minPointSize={4}
-                                    activeBar={{
-                                      fill: "#0ea5e9",
-                                      stroke: "#0369a1",
-                                      strokeWidth: 1,
-                                    }}
-                                    isAnimationActive={false}
-                                  />
-                                  <Line
-                                    yAxisId="probability"
-                                    dataKey="precipitation_probability"
-                                    name="Precip chance"
-                                    type="monotone"
-                                    stroke="#0f172a"
-                                    strokeWidth={2}
-                                    dot={{ r: 3.5, fill: "#0f172a" }}
-                                    activeDot={{ r: 5, fill: "#0f172a" }}
-                                    connectNulls
-                                    isAnimationActive={false}
-                                  />
-                                </>
-                              ) : (
-                                <Line
-                                  yAxisId="left"
-                                  dataKey="temperature_2m"
-                                  name="Temperature"
-                                  type="monotone"
-                                  stroke="#f97316"
-                                  strokeWidth={2.5}
-                                  dot={{ r: 3.5, fill: "#f97316" }}
-                                  activeDot={{ r: 5.5, fill: "#f97316" }}
-                                  connectNulls
-                                  isAnimationActive={false}
-                                />
-                              )}
-                            </ComposedChart>
-                          </ResponsiveContainer>
-                        </div>
+                <div className="mt-9">
+                  <Suspense
+                    fallback={
+                      <div className="space-y-3 rounded-[1.25rem] border border-[var(--ws-border-subtle)] bg-white/86 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
+                        <div className="ws-skeleton h-5 w-28 rounded-full" />
+                        <div className="ws-skeleton h-4 w-44 rounded-full" />
+                        <div className="ws-skeleton h-40 rounded-[1.3rem]" />
                       </div>
-                    ) : (
-                      <div className="rounded-2xl border border-dashed border-slate-300 bg-white/70 px-3 py-4 text-xs text-slate-500">
-                        Timeline data is unavailable right now.
-                      </div>
-                    )}
-                  </div>
-
-                  {hasHourlyTimeline &&
-                  mobileForecastMetric === "rain" &&
-                  !hasRainSeries ? (
-                    <p className="mt-2 text-[11px] text-slate-500">
-                      No precipitation is expected across this 12-hour window.
-                    </p>
-                  ) : null}
-                  {hasHourlyTimeline &&
-                  mobileForecastMetric === "temperature" &&
-                  !hasTemperatureSeries ? (
-                    <p className="mt-2 text-[11px] text-slate-500">
-                      Temperature forecast is unavailable for this 12-hour window.
-                    </p>
-                  ) : null}
+                    }
+                  >
+                    <LazyForecastTimelineCard
+                      data={locationContext?.hourly_timeline ?? []}
+                      metric={mobileForecastMetric}
+                      onMetricChange={setMobileForecastMetric}
+                      variant="desktop"
+                    />
+                  </Suspense>
                 </div>
 
                 <p className="mt-2.5 text-[11px] text-slate-500">
