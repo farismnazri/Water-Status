@@ -16,7 +16,7 @@ import { API_BASE } from "./api";
 
 const OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
 const OPEN_METEO_TIMEZONE = "Asia/Kuala_Lumpur";
-const LOCATION_CONTEXT_BACKEND_TIMEOUT_MS = 4500;
+const LOCATION_CONTEXT_BACKEND_TIMEOUT_MS = 10_000;
 const LOCATION_CONTEXT_FALLBACK_TIMEOUT_MS = 10_000;
 const LOCATION_CONTEXT_RATE_LIMIT_COOLDOWN_MS = 5 * 60_000;
 const OPEN_METEO_MAP_SAMPLE_GRID: Array<[string, number, number]> = [

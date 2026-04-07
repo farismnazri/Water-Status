@@ -14,6 +14,12 @@ from typing import Any
 OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 OPEN_METEO_TIMEOUT_SECONDS = int(os.getenv("OPEN_METEO_TIMEOUT_SECONDS", "20"))
 OPEN_METEO_CACHE_TTL_SECONDS = int(os.getenv("OPEN_METEO_CACHE_TTL_SECONDS", "1800"))
+OPEN_METEO_ERROR_CACHE_TTL_SECONDS = int(
+    os.getenv("OPEN_METEO_ERROR_CACHE_TTL_SECONDS", "60")
+)
+OPEN_METEO_STALE_IF_ERROR_TTL_SECONDS = int(
+    os.getenv("OPEN_METEO_STALE_IF_ERROR_TTL_SECONDS", "300")
+)
 OPEN_METEO_COORD_PRECISION = int(os.getenv("OPEN_METEO_COORD_PRECISION", "3"))
 OPEN_METEO_DEFAULT_BATCH_LIMIT = int(os.getenv("OPEN_METEO_DEFAULT_BATCH_LIMIT", "8"))
 OPEN_METEO_TIMEZONE = "Asia/Kuala_Lumpur"
@@ -341,6 +347,7 @@ def _get_cached_payloads_by_coord(coords: list[tuple[float, float]]) -> dict[str
     payloads_by_coord: dict[str, dict[str, Any]] = {}
     missing_coords: list[tuple[str, float, float]] = []
     seen_missing: set[str] = set()
+    stale_payloads_by_coord: dict[str, dict[str, Any]] = {}
 
     now_monotonic = time.monotonic()
     with _forecast_cache_lock:
@@ -350,6 +357,8 @@ def _get_cached_payloads_by_coord(coords: list[tuple[float, float]]) -> dict[str
             if cached and now_monotonic < cached[0]:
                 payloads_by_coord[coord_key] = copy.deepcopy(cached[1])
                 continue
+            if cached:
+                stale_payloads_by_coord[coord_key] = copy.deepcopy(cached[1])
 
             if coord_key in seen_missing:
                 continue
@@ -376,7 +385,21 @@ def _get_cached_payloads_by_coord(coords: list[tuple[float, float]]) -> dict[str
             for coord_key, _, _ in missing_coords:
                 cached_payload = fetched_by_coord.get(coord_key)
                 if cached_payload is None:
-                    payloads_by_coord[coord_key] = _error_payload(generated_at)
+                    fallback_payload = stale_payloads_by_coord.get(coord_key)
+                    if fallback_payload is not None:
+                        payloads_by_coord[coord_key] = copy.deepcopy(fallback_payload)
+                        _forecast_cache[coord_key] = (
+                            time.monotonic() + OPEN_METEO_STALE_IF_ERROR_TTL_SECONDS,
+                            copy.deepcopy(fallback_payload),
+                        )
+                        continue
+
+                    error_payload = _error_payload(generated_at)
+                    payloads_by_coord[coord_key] = copy.deepcopy(error_payload)
+                    _forecast_cache[coord_key] = (
+                        time.monotonic() + OPEN_METEO_ERROR_CACHE_TTL_SECONDS,
+                        copy.deepcopy(error_payload),
+                    )
                     continue
 
                 payloads_by_coord[coord_key] = copy.deepcopy(cached_payload)
@@ -385,9 +408,23 @@ def _get_cached_payloads_by_coord(coords: list[tuple[float, float]]) -> dict[str
                     copy.deepcopy(cached_payload),
                 )
     except Exception:
-        error_payload = _error_payload(generated_at)
-        for coord_key, _, _ in missing_coords:
-            payloads_by_coord[coord_key] = copy.deepcopy(error_payload)
+        with _forecast_cache_lock:
+            for coord_key, _, _ in missing_coords:
+                fallback_payload = stale_payloads_by_coord.get(coord_key)
+                if fallback_payload is not None:
+                    payloads_by_coord[coord_key] = copy.deepcopy(fallback_payload)
+                    _forecast_cache[coord_key] = (
+                        time.monotonic() + OPEN_METEO_STALE_IF_ERROR_TTL_SECONDS,
+                        copy.deepcopy(fallback_payload),
+                    )
+                    continue
+
+                error_payload = _error_payload(generated_at)
+                payloads_by_coord[coord_key] = copy.deepcopy(error_payload)
+                _forecast_cache[coord_key] = (
+                    time.monotonic() + OPEN_METEO_ERROR_CACHE_TTL_SECONDS,
+                    copy.deepcopy(error_payload),
+                )
 
     return payloads_by_coord
 

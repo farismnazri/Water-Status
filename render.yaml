@@ -19,6 +19,8 @@ services:
           name: water-status-api
           type: web
           envVarKey: RENDER_EXTERNAL_URL
+      - key: VITE_ENABLE_CLIENT_OPEN_METEO_FALLBACK
+        value: "1"
     routes:
       - type: rewrite
         source: /*

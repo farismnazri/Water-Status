@@ -99,7 +99,7 @@ const previewSections = [
   },
 ];
 
-const PREVIEW_REQUEST_TIMEOUT_MS = 4500;
+const PREVIEW_REQUEST_TIMEOUT_MS = 10_000;
 const LOCATION_CONTEXT_REFRESH_INTERVAL_MS = 60_000;
 const MOBILE_HOME_TAB_STORAGE_KEY = "wsMobileHomeTab";
 const MOBILE_HOME_LOCATION_MODE_STORAGE_KEY = "wsMobileHomeLocationMode";

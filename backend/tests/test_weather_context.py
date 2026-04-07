@@ -312,6 +312,53 @@ class WeatherContextTests(unittest.TestCase):
         self.assertEqual(second["status"], "ok")
         self.assertEqual(first["current"]["temperature_2m"], second["current"]["temperature_2m"])
 
+    def test_location_context_reuses_stale_cache_when_refresh_fails(self):
+        cached_payload = make_forecast_payload(
+            temperature=30.2,
+            apparent_temperature=33.7,
+            humidity=73,
+            wind=8,
+            weather_code=2,
+        )
+
+        with patch.object(
+            weather_context,
+            "_fetch_open_meteo_payloads",
+            return_value=[cached_payload for _ in range(9)],
+        ):
+            first = weather_context.get_location_forecast_context(3.1563, 101.7117, 8)
+
+        weather_context._forecast_cache = {
+            coord_key: (0.0, payload)
+            for coord_key, (_, payload) in weather_context._forecast_cache.items()
+        }
+
+        with patch.object(
+            weather_context,
+            "_fetch_open_meteo_payloads",
+            side_effect=RuntimeError("network down"),
+        ) as fetch_mock:
+            second = weather_context.get_location_forecast_context(3.1563, 101.7117, 8)
+
+        self.assertEqual(fetch_mock.call_count, 1)
+        self.assertEqual(first["status"], "ok")
+        self.assertEqual(second["status"], "ok")
+        self.assertEqual(second["current"]["temperature_2m"], 30.2)
+        self.assertEqual(len(second["map"]["frames"]), 6)
+
+    def test_location_context_caches_error_payload_briefly(self):
+        with patch.object(
+            weather_context,
+            "_fetch_open_meteo_payloads",
+            side_effect=RuntimeError("network down"),
+        ) as fetch_mock:
+            first = weather_context.get_location_forecast_context(3.1563, 101.7117, 8)
+            second = weather_context.get_location_forecast_context(3.1563, 101.7117, 8)
+
+        self.assertEqual(fetch_mock.call_count, 1)
+        self.assertEqual(first["status"], "error")
+        self.assertEqual(second["status"], "error")
+
 
 class SensorIngestTests(unittest.TestCase):
     def setUp(self):
