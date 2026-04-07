@@ -16,7 +16,6 @@ type MobileDailySummaryCardProps = {
   error: string | null;
   errorClasses: string;
   feelsLikeLabel: string;
-  forecastSourceNotice: string | null;
   isLoading: boolean;
   locationMessage: string | null;
   locationMode: "gps" | "manual";
@@ -43,7 +42,6 @@ export function MobileDailySummaryCard({
   error,
   errorClasses,
   feelsLikeLabel,
-  forecastSourceNotice,
   isLoading,
   locationMessage,
   locationMode,
@@ -190,12 +188,6 @@ export function MobileDailySummaryCard({
           </div>
         ) : (
           <>
-            {forecastSourceNotice ? (
-              <div className="mt-3 rounded-2xl border border-sky-200/80 bg-sky-50/80 px-4 py-3 text-xs text-sky-700">
-                {forecastSourceNotice}
-              </div>
-            ) : null}
-
             <div className="mt-3 flex items-end justify-between gap-3">
               <div>
                 <p className="text-[2.35rem] font-semibold leading-none tracking-tight text-slate-950">

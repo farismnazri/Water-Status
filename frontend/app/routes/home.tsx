@@ -30,7 +30,6 @@ import {
   formatWind,
   getWeatherCodeMeta,
   isForecastRateLimitError,
-  isClientForecastFallbackSource,
   type WeatherLocationContext,
 } from "../lib/weather";
 import { useMediaQuery } from "../lib/useMediaQuery";
@@ -1147,7 +1146,6 @@ export default function Home() {
       mobileTab !== "map" ||
       mobileMapPaused ||
       prefersReducedMotion ||
-      isClientForecastFallbackSource(locationContext?.source) ||
       frameCount < 2
     ) {
       return;
@@ -1187,12 +1185,6 @@ export default function Home() {
     locationContext?.map?.frames?.[mobileMapFrameIndex] ?? null;
   const shouldShowManualAreaPicker =
     manualAreaPickerOpen || (locationMode === "manual" && !mobileLocationTarget);
-  const usesClientForecastFallback = isClientForecastFallbackSource(
-    locationContext?.source
-  );
-  const forecastSourceNotice = usesClientForecastFallback
-    ? "Forecast fallback is active. Live map animation is paused while weather data reconnects."
-    : null;
   const locationContextErrorClasses =
     locationContextErrorTone === "warning"
       ? "border-amber-200 bg-amber-50 text-amber-800"
@@ -1268,11 +1260,10 @@ export default function Home() {
       isClient={isClient}
       loading={locationContextLoading}
       error={locationContextError}
-      staticFallback={usesClientForecastFallback}
       paused={mobileMapPaused}
       onPausedChange={setMobileMapPaused}
       onLayerChange={setMobileMapLayer}
-      onInteract={usesClientForecastFallback ? undefined : handleMapInteraction}
+      onInteract={handleMapInteraction}
     />
   );
 
@@ -1300,7 +1291,6 @@ export default function Home() {
               feelsLikeLabel={formatTemperature(
                 currentLocationSummary?.apparent_temperature
               )}
-              forecastSourceNotice={forecastSourceNotice}
               isLoading={locationContextLoading && !locationContext}
               locationMessage={locationMessage}
               locationMode={locationMode}
@@ -1527,12 +1517,6 @@ export default function Home() {
               </div>
             ) : (
               <>
-                {forecastSourceNotice ? (
-                  <div className="mt-4 rounded-[1.25rem] border border-sky-200/80 bg-sky-50/80 px-4 py-3 text-xs text-sky-700">
-                    {forecastSourceNotice}
-                  </div>
-                ) : null}
-
                 <div className="mt-1 flex items-end justify-between gap-4">
                   <div>
                     <p className="text-[2.35rem] font-semibold leading-none tracking-tight text-slate-950">
