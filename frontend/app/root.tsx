@@ -7,15 +7,18 @@ import {
   Outlet,
   Scripts,
   ScrollRestoration,
+  useLocation,
 } from "react-router";
 
 import { ShoppingCart } from "lucide-react";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import type { Route } from "./+types/root";
 import "./app.css";
+import { IosInstallHint } from "./components/IosInstallHint";
 import { HomeHydrationSkeleton } from "./components/HomeHydrationSkeleton";
+import { MobileBottomNav } from "./components/MobileBottomNav";
 import { MobileNavDrawer } from "./components/MobileNavDrawer";
 import { useMediaQuery } from "./lib/useMediaQuery";
 
@@ -56,6 +59,7 @@ function getCartCountForActiveUser(): number {
 }
 
 export const links: Route.LinksFunction = () => [
+  { rel: "icon", href: "/favicon.ico" },
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
   {
     rel: "preconnect",
@@ -66,6 +70,8 @@ export const links: Route.LinksFunction = () => [
     rel: "stylesheet",
     href: "https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap",
   },
+  { rel: "manifest", href: "/site.webmanifest" },
+  { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
 ];
 
 function CartButton({ cartCount }: { cartCount: number }) {
@@ -86,143 +92,210 @@ function CartButton({ cartCount }: { cartCount: number }) {
 }
 
 export function Layout({ children }: { children: React.ReactNode }) {
-  const navItems = [
+  const desktopNavItems = [
     { to: "/", label: "Home" },
     { to: "/about", label: "About us" },
     { to: "/sensors", label: "Stations" },
     { to: "/products", label: "Products" },
     { to: "/posts", label: "Posts" },
     { to: "/users", label: "Users" },
-    ];
-
-    const [cartCount, setCartCount] = useState(0);
-    const [mobileNavOpen, setMobileNavOpen] = useState(false);
-    const hasDesktopNav = useMediaQuery("(min-width: 1024px)");
-
-const [activeUser, setActiveUser] = useState<{
-  id: string | null;
-  name: string;
-  plan: string | null;
-}>(() => {
-  if (typeof window === "undefined") {
-    return { id: null, name: "Guest", plan: null };
-  }
-  try {
-    const raw = window.localStorage.getItem("wsActiveUser");
-    if (!raw) return { id: null, name: "Guest", plan: null };
-    const saved = JSON.parse(raw);
-    return {
-      id: saved?.id ?? null,
-      name: saved?.name || "Guest",
-      plan: saved?.plan ?? null,
-    };
-  } catch {
-    return { id: null, name: "Guest", plan: null };
-  }
-});
-
-  // listen for the custom event from UsersPage (active user)
-useEffect(() => {
-  function refreshFromStorage() {
+  ];
+  const mobileMenuItems = [
+    { to: "/posts", label: "Posts" },
+    { to: "/products", label: "Products" },
+    { to: "/cart", label: "Cart" },
+    { to: "/users", label: "Users" },
+    { to: "/about", label: "About" },
+  ];
+  const location = useLocation();
+  const [cartCount, setCartCount] = useState(0);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [mobileHeaderHidden, setMobileHeaderHidden] = useState(false);
+  const hasDesktopNav = useMediaQuery("(min-width: 1024px)");
+  const lastScrollYRef = useRef(0);
+  const [activeUser, setActiveUser] = useState<{
+    id: string | null;
+    name: string;
+    plan: string | null;
+  }>(() => {
+    if (typeof window === "undefined") {
+      return { id: null, name: "Guest", plan: null };
+    }
     try {
       const raw = window.localStorage.getItem("wsActiveUser");
-      if (!raw) {
-        setActiveUser({ id: null, name: "Guest", plan: null });
-        return;
-      }
+      if (!raw) return { id: null, name: "Guest", plan: null };
       const saved = JSON.parse(raw);
-      setActiveUser({
+      return {
         id: saved?.id ?? null,
         name: saved?.name || "Guest",
         plan: saved?.plan ?? null,
-      });
+      };
     } catch {
-      setActiveUser({ id: null, name: "Guest", plan: null });
+      return { id: null, name: "Guest", plan: null };
     }
-  }
+  });
+  const isMenuActive =
+    mobileNavOpen ||
+    (location.pathname !== "/" && !location.pathname.startsWith("/sensors"));
 
-  if (typeof window === "undefined") return;
+  // listen for the custom event from UsersPage (active user)
+  useEffect(() => {
+    function refreshFromStorage() {
+      try {
+        const raw = window.localStorage.getItem("wsActiveUser");
+        if (!raw) {
+          setActiveUser({ id: null, name: "Guest", plan: null });
+          return;
+        }
+        const saved = JSON.parse(raw);
+        setActiveUser({
+          id: saved?.id ?? null,
+          name: saved?.name || "Guest",
+          plan: saved?.plan ?? null,
+        });
+      } catch {
+        setActiveUser({ id: null, name: "Guest", plan: null });
+      }
+    }
 
-  // first load
-  refreshFromStorage();
+    if (typeof window === "undefined") return;
 
-  const handler = () => refreshFromStorage();
-  window.addEventListener("ws-active-user-changed", handler);
+    refreshFromStorage();
 
-  const storageHandler = (e: StorageEvent) => {
-    if (e.key === "wsActiveUser") refreshFromStorage();
-  };
-  window.addEventListener("storage", storageHandler);
+    const handler = () => refreshFromStorage();
+    window.addEventListener("ws-active-user-changed", handler);
 
-  return () => {
-    window.removeEventListener("ws-active-user-changed", handler);
-    window.removeEventListener("storage", storageHandler);
-  };
-}, []);
+    const storageHandler = (event: StorageEvent) => {
+      if (event.key === "wsActiveUser") refreshFromStorage();
+    };
+    window.addEventListener("storage", storageHandler);
 
-// 🛒 Keep cartCount in sync with per-user cart + active user
-useEffect(() => {
-  if (typeof window === "undefined") return;
+    return () => {
+      window.removeEventListener("ws-active-user-changed", handler);
+      window.removeEventListener("storage", storageHandler);
+    };
+  }, []);
 
-  function refreshCart() {
-    setCartCount(getCartCountForActiveUser());
-  }
+  // 🛒 Keep cartCount in sync with per-user cart + active user
+  useEffect(() => {
+    if (typeof window === "undefined") return;
 
-  // initial load
-  refreshCart();
+    function refreshCart() {
+      setCartCount(getCartCountForActiveUser());
+    }
 
-  // when cart content changes (CartPage / Products call window.dispatchEvent("ws-cart-updated"))
-  const cartHandler = () => refreshCart();
-  window.addEventListener("ws-cart-updated", cartHandler);
-
-  // when ACTIVE USER changes (Users page fires ws-active-user-changed)
-  const activeHandler = () => refreshCart();
-  window.addEventListener("ws-active-user-changed", activeHandler);
-
-const storageHandler = (e: StorageEvent) => {
-  if (!e.key) return;
-  if (
-    e.key === ACTIVE_USER_KEY ||
-    e.key === "wsCart:guest" ||
-    e.key.startsWith("wsCart:")
-  ) {
     refreshCart();
-  }
-};
-  window.addEventListener("storage", storageHandler);
 
-  return () => {
-    window.removeEventListener("ws-cart-updated", cartHandler);
-    window.removeEventListener("ws-active-user-changed", activeHandler);
-    window.removeEventListener("storage", storageHandler);
-  };
-}, []);
+    const cartHandler = () => refreshCart();
+    window.addEventListener("ws-cart-updated", cartHandler);
 
-useEffect(() => {
-  if (hasDesktopNav) {
-    setMobileNavOpen(false);
-  }
-}, [hasDesktopNav]);
+    const activeHandler = () => refreshCart();
+    window.addEventListener("ws-active-user-changed", activeHandler);
+
+    const storageHandler = (event: StorageEvent) => {
+      if (!event.key) return;
+      if (
+        event.key === ACTIVE_USER_KEY ||
+        event.key === "wsCart:guest" ||
+        event.key.startsWith("wsCart:")
+      ) {
+        refreshCart();
+      }
+    };
+    window.addEventListener("storage", storageHandler);
+
+    return () => {
+      window.removeEventListener("ws-cart-updated", cartHandler);
+      window.removeEventListener("ws-active-user-changed", activeHandler);
+      window.removeEventListener("storage", storageHandler);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (hasDesktopNav) {
+      setMobileNavOpen(false);
+    }
+  }, [hasDesktopNav]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    if (hasDesktopNav || mobileNavOpen) {
+      setMobileHeaderHidden(false);
+      lastScrollYRef.current = window.scrollY;
+      return;
+    }
+
+    let frameId = 0;
+
+    const updateHeaderVisibility = () => {
+      const nextScrollY = window.scrollY;
+      const delta = nextScrollY - lastScrollYRef.current;
+
+      if (nextScrollY <= 20) {
+        setMobileHeaderHidden(false);
+      } else if (delta > 10 && nextScrollY > 88) {
+        setMobileHeaderHidden(true);
+      } else if (delta < -8) {
+        setMobileHeaderHidden(false);
+      }
+
+      lastScrollYRef.current = nextScrollY;
+      frameId = 0;
+    };
+
+    lastScrollYRef.current = window.scrollY;
+
+    const handleScroll = () => {
+      if (frameId !== 0) return;
+      frameId = window.requestAnimationFrame(updateHeaderVisibility);
+    };
+
+    window.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      window.removeEventListener("scroll", handleScroll);
+      if (frameId !== 0) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, [hasDesktopNav, mobileNavOpen]);
 
   return (
     <html lang="en">
       <head>
         <meta charSet="utf-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta
+          name="viewport"
+          content="width=device-width, initial-scale=1, viewport-fit=cover"
+        />
+        <meta name="theme-color" content="#eff6fd" />
+        <meta name="apple-mobile-web-app-capable" content="yes" />
+        <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+        <meta name="apple-mobile-web-app-title" content="Water Status" />
+        <meta name="mobile-web-app-capable" content="yes" />
+        <meta name="format-detection" content="telephone=no" />
         <Meta />
         <Links />
       </head>
       <body className="min-h-screen text-[var(--ws-text-main)]">
         <div className="relative">
           {/* Top nav */}
-          <header className="border-b border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)]/95 backdrop-blur">
-            <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <header
+            className="ws-mobile-header border-b border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)]/95 backdrop-blur"
+            data-hidden={mobileHeaderHidden ? "true" : "false"}
+          >
+            <div className="ws-mobile-header-inner mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
               {/* Left: logo */}
-              <Link to="/" className="flex items-center gap-2">
-                <span className="ws-logo-circle inline-flex h-7 w-7 items-center justify-center text-sm font-bold">
-                  W
-                </span>
-                <span className="text-sm font-semibold tracking-tight">
+              <Link to="/" className="flex min-w-0 items-center gap-2.5">
+                <img
+                  src="/WaterStatus_Icon.svg"
+                  alt=""
+                  width={44}
+                  height={44}
+                  className="h-10 w-10 shrink-0 rounded-[0.9rem] object-contain shadow-[0_8px_18px_rgba(89,170,247,0.18)]"
+                />
+                <span className="truncate text-[1.05rem] font-semibold tracking-tight text-slate-900">
                   Water Status
                 </span>
               </Link>
@@ -230,7 +303,7 @@ useEffect(() => {
               {/* Desktop nav */}
               <div className="hidden items-center gap-4 lg:flex">
                 <nav className="flex gap-1 text-sm">
-                  {navItems.map((item) => (
+                  {desktopNavItems.map((item) => (
                     <NavLink
                       key={item.to}
                       to={item.to}
@@ -264,25 +337,39 @@ useEffect(() => {
               </div>
 
               {/* Mobile nav */}
-              <div className="flex items-center gap-2 lg:hidden">
-                <CartButton cartCount={cartCount} />
-                <MobileNavDrawer
-                  activeUser={activeUser}
-                  cartCount={cartCount}
-                  navItems={navItems}
-                  open={mobileNavOpen}
-                  setOpen={setMobileNavOpen}
-                />
+              <div className="flex min-w-0 items-center gap-2 lg:hidden">
+                <div className="flex flex-col items-end text-[9px] leading-[1.05]">
+                  <span className="max-w-[8.5rem] truncate text-[0.92rem] font-semibold text-slate-800">
+                    {activeUser.name || "Guest"}
+                  </span>
+                  <span className="uppercase tracking-[0.16em] text-slate-500">
+                    {activeUser.plan ? `${activeUser.plan} plan` : "Mobile app"}
+                  </span>
+                </div>
               </div>
             </div>
           </header>
 
           {/* Page content */}
-          <div className="pt-1">
-            {children}
+          <div className="ws-mobile-page-offset">
+            <MobileNavDrawer
+              activeUser={activeUser}
+              cartCount={cartCount}
+              navItems={mobileMenuItems}
+              open={mobileNavOpen}
+              setOpen={setMobileNavOpen}
+              showTrigger={false}
+            />
+            <div>{children}</div>
           </div>
         </div>
 
+        <IosInstallHint />
+        <MobileBottomNav
+          cartCount={cartCount}
+          menuActive={isMenuActive}
+          onOpenMenu={() => setMobileNavOpen(true)}
+        />
         <ScrollRestoration />
         <Scripts />
       </body>

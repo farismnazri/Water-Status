@@ -40,7 +40,7 @@ export function RevealSection({
   return (
     <div
       ref={ref}
-      className={["transition-all duration-700 ease-out", className].join(" ")}
+      className={className}
       style={{
         opacity: visible ? 1 : 0,
         transform: visible ? "translateY(0px)" : `translateY(${initialOffset}px)`,

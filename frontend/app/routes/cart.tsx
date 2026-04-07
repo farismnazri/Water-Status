@@ -167,6 +167,10 @@ export default function CartPage() {
                         <img
                           src={getItemImage(it)!}
                           alt={it.name}
+                          width={128}
+                          height={128}
+                          loading="lazy"
+                          decoding="async"
                           className="ws-card-panel-soft h-24 w-24 rounded-xl object-contain p-2 sm:h-32 sm:w-32"
                         />
                       ) : (

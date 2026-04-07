@@ -149,7 +149,7 @@ function handleAddToCart(item: CartItem) {
             type="button"
             onClick={() => setActiveTab("sensors")}
             className={[
-              "py-2.5 text-center font-medium transition",
+              "py-2.5 text-center font-medium transition-colors",
               activeTab === "sensors"
                 ? "bg-sky-600 text-white shadow-inner"
                 : "text-slate-600 hover:bg-slate-100",
@@ -161,7 +161,7 @@ function handleAddToCart(item: CartItem) {
             type="button"
             onClick={() => setActiveTab("subscriptions")}
             className={[
-              "py-2.5 text-center font-medium transition",
+              "py-2.5 text-center font-medium transition-colors",
               activeTab === "subscriptions"
                 ? "bg-sky-600 text-white shadow-inner"
                 : "text-slate-600 hover:bg-slate-100",
@@ -198,6 +198,9 @@ function SensorsTab({ onAddToCart }: { onAddToCart: (item: CartItem) => void }) 
           <img
             src="/images/basic.png"
             alt="Water Status starter kit"
+            width={1024}
+            height={1536}
+            decoding="async"
             className="ws-card-panel-soft mb-3 aspect-[4/3] w-full rounded-xl object-contain p-3"
           />
           <p className="text-sm font-semibold">Starter Kit</p>
@@ -226,6 +229,9 @@ function SensorsTab({ onAddToCart }: { onAddToCart: (item: CartItem) => void }) 
           <img
             src="/images/bundle.png"
             alt="Water Status neighbour bundle"
+            width={1457}
+            height={1457}
+            decoding="async"
             className="ws-card-panel-soft mb-3 aspect-[4/3] w-full rounded-xl object-contain p-3"
           />
           <p className="text-sm font-semibold">Neighbour Bundle</p>
@@ -253,6 +259,9 @@ function SensorsTab({ onAddToCart }: { onAddToCart: (item: CartItem) => void }) 
           <img
             src="/images/superbundle.png"
             alt="Water Status community pack"
+            width={1457}
+            height={1457}
+            decoding="async"
             className="ws-card-panel-soft mb-3 aspect-[4/3] w-full rounded-xl object-contain p-3"
           />
           <p className="text-sm font-semibold">Community Pack</p>
@@ -341,6 +350,10 @@ function SubscriptionsTab() {
           <img
             src="/images/satellite-iot-energy-agriculture.jpg"
             alt="Water Status community pack"
+            width={1200}
+            height={675}
+            loading="lazy"
+            decoding="async"
             className="ws-card-panel-soft mb-3 h-24 w-full rounded-lg object-cover"
           />
           <ul className="text-[11px] text-slate-600 list-disc pl-4 space-y-0.5">

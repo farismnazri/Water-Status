@@ -19,6 +19,7 @@ type MobileNavDrawerProps = {
   navItems: NavItem[];
   open: boolean;
   setOpen: (open: boolean) => void;
+  showTrigger?: boolean;
 };
 
 export function MobileNavDrawer({
@@ -27,6 +28,7 @@ export function MobileNavDrawer({
   navItems,
   open,
   setOpen,
+  showTrigger = true,
 }: MobileNavDrawerProps) {
   return (
     <Drawer.Root
@@ -35,13 +37,15 @@ export function MobileNavDrawer({
       onOpenChange={setOpen}
       swipeDirection="right"
     >
-      <Drawer.Trigger
-        aria-label="Open navigation menu"
-        className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] text-slate-700 transition hover:bg-[var(--ws-accent-alt)]/70"
-        type="button"
-      >
-        <Menu className="h-4 w-4" />
-      </Drawer.Trigger>
+      {showTrigger ? (
+        <Drawer.Trigger
+          aria-label="Open navigation menu"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] text-slate-700 transition-colors hover:bg-[var(--ws-accent-alt)]/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
+          type="button"
+        >
+          <Menu className="h-4 w-4" />
+        </Drawer.Trigger>
+      ) : null}
 
       <Drawer.Portal keepMounted>
         <Drawer.Backdrop
@@ -53,7 +57,7 @@ export function MobileNavDrawer({
 
         <Drawer.Popup
           className={[
-            "fixed inset-y-0 right-0 z-50 flex w-[min(88vw,20rem)] max-w-sm flex-col overflow-y-auto border-l border-[var(--ws-border-subtle)] bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(241,247,252,0.98))] px-4 pb-6 pt-5 shadow-[0_20px_60px_rgba(15,23,42,0.22)] backdrop-blur-xl transition-transform duration-300 ease-out",
+            "fixed inset-y-0 right-0 z-50 flex w-[min(88vw,20rem)] max-w-sm flex-col overflow-y-auto overscroll-contain border-l border-[var(--ws-border-subtle)] bg-[linear-gradient(180deg,rgba(255,255,255,0.95),rgba(241,247,252,0.98))] px-4 pb-[calc(1.5rem+env(safe-area-inset-bottom))] pt-[calc(1.25rem+env(safe-area-inset-top))] shadow-[0_20px_60px_rgba(15,23,42,0.22)] backdrop-blur-xl transition-transform duration-300 ease-out",
             open ? "translate-x-0" : "pointer-events-none translate-x-full",
           ].join(" ")}
         >
@@ -79,7 +83,7 @@ export function MobileNavDrawer({
 
             <Drawer.Close
               aria-label="Close navigation menu"
-              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--ws-border-subtle)] bg-white/82 text-slate-700 transition hover:bg-[var(--ws-accent-alt)]/75"
+              className="inline-flex h-9 w-9 items-center justify-center rounded-full border border-[var(--ws-border-subtle)] bg-white/82 text-slate-700 transition-colors hover:bg-[var(--ws-accent-alt)]/75 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
               type="button"
             >
               <X className="h-4 w-4" />
@@ -106,7 +110,7 @@ export function MobileNavDrawer({
                 onClick={() => setOpen(false)}
                 className={({ isActive }) =>
                   [
-                    "flex items-center justify-between rounded-2xl border px-4 py-3 text-sm font-medium transition",
+                    "flex items-center justify-between rounded-2xl border px-4 py-3 text-sm font-medium transition-colors",
                     isActive
                       ? "border-[var(--ws-accent-soft)] bg-[var(--ws-accent)]/92 text-slate-950 shadow-sm"
                       : "border-slate-200/80 bg-white/78 text-slate-700 hover:border-[var(--ws-accent-soft)] hover:bg-[var(--ws-accent-alt)]/75",
@@ -124,7 +128,7 @@ export function MobileNavDrawer({
             <Link
               to="/cart"
               onClick={() => setOpen(false)}
-              className="flex items-center justify-between rounded-2xl border border-slate-200/80 bg-white/78 px-4 py-3 text-sm font-medium text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition hover:border-[var(--ws-accent-soft)] hover:bg-[var(--ws-accent-alt)]/75"
+              className="flex items-center justify-between rounded-2xl border border-slate-200/80 bg-white/78 px-4 py-3 text-sm font-medium text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.06)] transition-colors hover:border-[var(--ws-accent-soft)] hover:bg-[var(--ws-accent-alt)]/75"
             >
               <span>Open cart</span>
               {cartCount > 0 ? (

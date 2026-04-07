@@ -57,6 +57,9 @@ function RotatingPhone() {
       <img
         src={PhoneWarningImg}
         alt="Water Status early warning screen on a phone"
+        width={3000}
+        height={4500}
+        decoding="async"
         className="w-full h-auto object-contain drop-shadow-xl"
       />
     </div>
@@ -144,6 +147,10 @@ useEffect(() => {
                 <img
                   src={FloodOneImg}
                   alt="Street and houses affected by local flooding"
+                  width={500}
+                  height={600}
+                  loading="lazy"
+                  decoding="async"
                   className="h-44 w-full object-cover sm:h-52"
                 />
                 <div className="px-5 py-5 space-y-2">
@@ -166,6 +173,10 @@ useEffect(() => {
                 <img
                   src={FloodTwoImg}
                   alt="Flooded neighbourhood near a small river"
+                  width={500}
+                  height={600}
+                  loading="lazy"
+                  decoding="async"
                   className="h-44 w-full object-cover sm:h-52"
                 />
                 <div className="px-5 py-5 space-y-2">
@@ -188,6 +199,10 @@ useEffect(() => {
                 <img
                   src={FloodThreeImg}
                   alt="Shops and small businesses standing in floodwater"
+                  width={500}
+                  height={600}
+                  loading="lazy"
+                  decoding="async"
                   className="h-44 w-full object-cover sm:h-52"
                 />
                 <div className="px-5 py-5 space-y-2">

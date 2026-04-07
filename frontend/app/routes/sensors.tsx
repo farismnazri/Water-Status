@@ -1213,7 +1213,7 @@ export default function SensorsPage() {
       <select
         value={locationFilter}
         onChange={(e) => setLocationFilter(e.target.value)}
-        className="ws-card-control min-w-0 flex-1 rounded-full px-3 py-1 text-xs text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-300 sm:flex-none sm:text-sm"
+        className="ws-card-control min-w-0 flex-1 rounded-full px-3 py-1 text-xs text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 sm:flex-none sm:text-sm"
       >
         <option value="all">All locations</option>
         {uniqueLocations.map((loc) => (

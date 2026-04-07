@@ -984,7 +984,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
                             e.target.value as "all" | "rain" | "water_level" | "temperature"
                           )
                         }
-                        className="ws-card-control rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                        className="ws-card-control rounded-lg px-2 py-1 text-[11px] text-slate-800 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-300"
                       >
                         <option value="all">All types</option>
                         <option value="rain">Precip</option>
@@ -998,7 +998,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
                       <select
                         value={chartSensorId}
                         onChange={(e) => setChartSensorId(e.target.value)}
-                        className="ws-card-control rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                        className="ws-card-control rounded-lg px-2 py-1 text-[11px] text-slate-800 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-300"
                       >
                         <option value="">Choose a station…</option>
                         {chartSensorOptions.map((s) => (
@@ -1017,7 +1017,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
                           const next = Number.parseInt(e.target.value, 10);
                           setChartHours(Number.isFinite(next) && next > 0 ? next : 24);
                         }}
-                        className="ws-card-control rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                        className="ws-card-control rounded-lg px-2 py-1 text-[11px] text-slate-800 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-300"
                       >
                         <option value="6">Last 6 hours</option>
                         <option value="12">Last 12 hours</option>
@@ -1046,7 +1046,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
                             e.target.value as "match" | "rain" | "water_level" | "temperature"
                           )
                         }
-                        className="ws-card-control rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                        className="ws-card-control rounded-lg px-2 py-1 text-[11px] text-slate-800 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-300"
                         disabled={!chartSensorId}
                       >
                         <option value="match">Match main type</option>
@@ -1061,7 +1061,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
                       <select
                         value={chartCompareSensorId}
                         onChange={(e) => setChartCompareSensorId(e.target.value)}
-                        className="ws-card-control rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+                        className="ws-card-control rounded-lg px-2 py-1 text-[11px] text-slate-800 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-300"
                         disabled={!chartSensorId || compareSensorOptions.length === 0}
                       >
                         <option value="">(none)</option>
@@ -1256,7 +1256,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
         setType(newType);
         setSensorId("");        // 🔹 reset sensor when type changes
       }}
-      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
       disabled={!activeUser}
     >
       <option value="rain">Precip (mm/h)</option>
@@ -1273,7 +1273,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
     <select
       value={sensorId}
       onChange={(e) => setSensorId(e.target.value)}
-      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
       disabled={!activeUser || filteredSensors.length === 0}
     >
       <option value="">
@@ -1299,7 +1299,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
                   step="0.01"
                   value={value}
                   onChange={(e) => setValue(e.target.value)}
-                  className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                  className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
                   placeholder={
                     type === "rain"
                       ? "e.g. 35.6"
@@ -1320,7 +1320,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
                   value={comment}
                   onChange={(e) => setComment(e.target.value)}
                   rows={3}
-                  className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300 resize-none"
+                  className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300 resize-none"
                   placeholder="e.g. Precipitation picked up for 30 minutes, drains almost full."
                   disabled={!activeUser}
                 />
@@ -1335,7 +1335,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
                   type="datetime-local"
                   value={observedAt}
                   onChange={(e) => setObservedAt(e.target.value)}
-                  className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                  className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
                   disabled={!activeUser}
                 />
                 <p className="text-[10px] text-slate-500">
@@ -1473,7 +1473,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
             setEditType(newType);
             setEditSensorId(""); // reset station when type changes
           }}
-          className="ws-card-control w-full rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+          className="ws-card-control w-full rounded-lg px-2 py-1 text-[11px] text-slate-800 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-300"
         >
           <option value="rain">Precip (mm/h)</option>
           <option value="water_level">Water level (m)</option>
@@ -1489,7 +1489,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
         <select
           value={editSensorId}
           onChange={(e) => setEditSensorId(e.target.value)}
-          className="ws-card-control w-full rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+          className="ws-card-control w-full rounded-lg px-2 py-1 text-[11px] text-slate-800 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-300"
         >
           <option value="">
             {editFilteredSensors.length
@@ -1514,7 +1514,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
           step="0.01"
           value={editValue}
           onChange={(e) => setEditValue(e.target.value)}
-          className="ws-card-control w-full rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300"
+          className="ws-card-control w-full rounded-lg px-2 py-1 text-[11px] text-slate-800 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-300"
         />
       </div>
 
@@ -1527,7 +1527,7 @@ function addUserSeries(list: UserReport[], mainList: SensorReading[]) {
           rows={2}
           value={editComment}
           onChange={(e) => setEditComment(e.target.value)}
-          className="ws-card-control w-full rounded-lg px-2 py-1 text-[11px] text-slate-800 focus:outline-none focus:ring-1 focus:ring-sky-300 resize-none"
+          className="ws-card-control w-full rounded-lg px-2 py-1 text-[11px] text-slate-800 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-sky-300 resize-none"
         />
       </div>
     </div>

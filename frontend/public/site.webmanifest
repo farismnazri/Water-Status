@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "Water Status",
+  "short_name": "Water Status",
+  "description": "Check nearby water, rainfall, and temperature conditions from local sensors and forecast views.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#eff6fd",
+  "theme_color": "#5ab2ff",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

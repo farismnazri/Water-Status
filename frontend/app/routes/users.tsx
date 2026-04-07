@@ -621,7 +621,7 @@ export default function UsersPage() {
                     <input
                       value={username}
                       onChange={(e) => setUsername(sanitizeUsernameInput(e.target.value))}
-                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
                       placeholder="username"
                       autoComplete="username"
                       required
@@ -634,7 +634,7 @@ export default function UsersPage() {
                       type="password"
                       value={password}
                       onChange={(e) => setPassword(sanitizePasswordInput(e.target.value))}
-                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
                       autoComplete="current-password"
                       required
                     />
@@ -656,7 +656,7 @@ export default function UsersPage() {
                     <input
                       value={username}
                       onChange={(e) => setUsername(sanitizeUsernameInput(e.target.value))}
-                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
                       placeholder="new username"
                       autoComplete="username"
                       required
@@ -669,7 +669,7 @@ export default function UsersPage() {
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(sanitizeGmailEmailInput(e.target.value))}
-                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
                       autoComplete="email"
                       required
                     />
@@ -681,7 +681,7 @@ export default function UsersPage() {
                       type="password"
                       value={password}
                       onChange={(e) => setPassword(sanitizePasswordInput(e.target.value))}
-                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
                       autoComplete="new-password"
                       required
                     />
@@ -693,7 +693,7 @@ export default function UsersPage() {
                       type="password"
                       value={confirmPassword}
                       onChange={(e) => setConfirmPassword(sanitizePasswordInput(e.target.value))}
-                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
                       autoComplete="new-password"
                       required
                     />
@@ -707,7 +707,7 @@ export default function UsersPage() {
                         setRegistrationPlan(e.target.value as Plan);
                         setPlanConfirmation("");
                       }}
-                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
                     >
                       <option value="free">Free</option>
                       <option value="plus">Plus</option>
@@ -725,7 +725,7 @@ export default function UsersPage() {
                         onChange={(e) =>
                           setPlanConfirmation(sanitizePlanConfirmationInput(e.target.value))
                         }
-                        className="w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                        className="w-full rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
                         placeholder="Enter access key"
                         required
                       />
@@ -798,7 +798,7 @@ export default function UsersPage() {
                     <input
                       value={profileUsername}
                       onChange={(e) => setProfileUsername(sanitizeUsernameInput(e.target.value))}
-                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
                       required
                     />
                   </div>
@@ -809,7 +809,7 @@ export default function UsersPage() {
                       type="email"
                       value={profileEmail}
                       onChange={(e) => setProfileEmail(sanitizeGmailEmailInput(e.target.value))}
-                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-sky-300"
+                      className="ws-card-control w-full rounded-lg px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
                       required
                     />
                   </div>
@@ -943,7 +943,7 @@ export default function UsersPage() {
                           <input
                             value={deleteHandshake}
                             onChange={(e) => setDeleteHandshake(sanitizeUsernameInput(e.target.value))}
-                            className="w-full max-w-sm rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-300"
+                            className="w-full max-w-sm rounded-lg border border-amber-200 bg-white px-3 py-2 text-sm text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300"
                             placeholder="type username"
                           />
                           <div className="flex items-center gap-2">
