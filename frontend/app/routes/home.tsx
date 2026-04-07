@@ -33,6 +33,18 @@ import {
   type WeatherLocationContext,
 } from "../lib/weather";
 import { useMediaQuery } from "../lib/useMediaQuery";
+import type { Route } from "./+types/home";
+
+export function meta({}: Route.MetaArgs) {
+  return [
+    { title: "Water Status" },
+    {
+      name: "description",
+      content:
+        "Check nearby water, rainfall, and temperature conditions from local sensors and forecast views.",
+    },
+  ];
+}
 
 type SensorType = "rain" | "water_level" | "temperature";
 
@@ -108,6 +120,7 @@ const MOBILE_TAB_SWIPE_THRESHOLD_PX = 72;
 const MOBILE_TAB_SWIPE_INTENT_PX = 16;
 const MOBILE_TAB_SWIPE_INTENT_RATIO = 1.2;
 const MOBILE_TAB_EDGE_DAMPING = 0.35;
+const MOBILE_TAB_PANEL_GAP_PX = 10;
 
 const LazyForecastTimelineCard = lazy(() =>
   import("../components/ForecastTimelineCard").then((module) => ({
@@ -1353,8 +1366,18 @@ export default function Home() {
                     transition: mobileTabTrackTransition,
                   }}
                 >
-                  <div className="w-1/2 shrink-0">{mobileForecastPanel}</div>
-                  <div className="w-1/2 shrink-0">{mobileMapPanel}</div>
+                  <div
+                    className="w-1/2 shrink-0"
+                    style={{ paddingRight: MOBILE_TAB_PANEL_GAP_PX / 2 }}
+                  >
+                    {mobileForecastPanel}
+                  </div>
+                  <div
+                    className="w-1/2 shrink-0"
+                    style={{ paddingLeft: MOBILE_TAB_PANEL_GAP_PX / 2 }}
+                  >
+                    {mobileMapPanel}
+                  </div>
                 </div>
               </div>
 

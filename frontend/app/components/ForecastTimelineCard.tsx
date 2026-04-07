@@ -262,15 +262,15 @@ export function ForecastTimelineCard({
     <div
       className={[
         "rounded-[1.25rem] border border-[var(--ws-border-subtle)] bg-[linear-gradient(180deg,rgba(240,249,255,0.7),rgba(255,255,255,0.8))]",
-        isCompact ? "px-3.5 py-3" : "px-3.5 py-1",
+        isCompact ? "px-3 py-2.5" : "px-3.5 py-1",
       ].join(" ")}
     >
-      <div className="flex items-center justify-between gap-3">
+      <div className={`flex items-center justify-between ${isCompact ? "gap-2.5" : "gap-3"}`}>
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
             {metric === "rain" ? "Precip 12h" : "Temp 12h"}
           </p>
-          <p className="mt-1 text-[11px] text-slate-500">
+          <p className={`${isCompact ? "mt-0.5" : "mt-1"} text-[11px] text-slate-500`}>
             6h back and 6h ahead, in 1-hour steps.
           </p>
         </div>
@@ -299,20 +299,25 @@ export function ForecastTimelineCard({
         </div>
       </div>
 
-      <div className="mt-2.5 space-y-2.5">
-        <div className="inline-flex min-h-8 items-center rounded-full border border-slate-200/80 bg-white/88 px-3 py-1.5 text-[11px] font-medium text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.06)] tabular-nums">
+      <div className={isCompact ? "mt-2 space-y-2" : "mt-2.5 space-y-2.5"}>
+        <div
+          className={[
+            "inline-flex items-center rounded-full border border-slate-200/80 bg-white/88 text-[11px] font-medium text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.06)] tabular-nums",
+            isCompact ? "min-h-7 px-2.5 py-1.25" : "min-h-8 px-3 py-1.5",
+          ].join(" ")}
+        >
           {readout}
         </div>
 
-        <div className={isCompact ? "h-52" : "h-40"}>
+        <div className={isCompact ? "h-48" : "h-40"}>
           <ResponsiveContainer width="100%" height="100%">
             <ComposedChart
               data={chartData}
               margin={{
-                top: 8,
+                top: isCompact ? 6 : 8,
                 right: metric === "rain" ? 10 : 4,
                 left: metric === "temperature" ? (isCompact ? 18 : 20) : isCompact ? 6 : 10,
-                bottom: 14,
+                bottom: isCompact ? 10 : 14,
               }}
               onMouseMove={updateActiveIndex}
               onMouseLeave={() => setActiveIndex(defaultActiveIndex)}
@@ -326,13 +331,17 @@ export function ForecastTimelineCard({
               />
               <XAxis
                 dataKey="display_label"
-                axisLine={false}
+                axisLine={
+                  metric === "temperature"
+                    ? { stroke: "rgba(148,163,184,0.32)" }
+                    : false
+                }
                 tickLine={false}
                 interval={0}
-                height={34}
+                height={isCompact ? 30 : 34}
                 padding={{ left: 8, right: 8 }}
                 tick={{ fill: "#64748b", fontSize: 11 }}
-                tickMargin={10}
+                tickMargin={isCompact ? 8 : 10}
                 tickFormatter={(value, index) =>
                   chartTickIndexes.has(index) ? value : ""
                 }

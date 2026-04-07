@@ -59,7 +59,18 @@ function getCartCountForActiveUser(): number {
 }
 
 export const links: Route.LinksFunction = () => [
-  { rel: "icon", href: "/favicon.ico" },
+  {
+    rel: "icon",
+    href: "/WaterStatus_Icon.svg",
+    type: "image/svg+xml",
+  },
+  {
+    rel: "icon",
+    href: "/icons/water-status-icon-192.png",
+    sizes: "192x192",
+    type: "image/png",
+  },
+  { rel: "shortcut icon", href: "/favicon.ico" },
   { rel: "preconnect", href: "https://fonts.googleapis.com" },
   {
     rel: "preconnect",
@@ -70,8 +81,12 @@ export const links: Route.LinksFunction = () => [
     rel: "stylesheet",
     href: "https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap",
   },
-  { rel: "manifest", href: "/site.webmanifest" },
-  { rel: "apple-touch-icon", href: "/apple-touch-icon.png" },
+  { rel: "manifest", href: "/site.webmanifest?v=2" },
+  {
+    rel: "apple-touch-icon",
+    href: "/icons/apple-touch-icon-180.png",
+    sizes: "180x180",
+  },
 ];
 
 function CartButton({ cartCount }: { cartCount: number }) {
@@ -269,6 +284,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           name="viewport"
           content="width=device-width, initial-scale=1, viewport-fit=cover"
         />
+        <meta name="application-name" content="Water Status" />
         <meta name="theme-color" content="#eff6fd" />
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-status-bar-style" content="default" />
