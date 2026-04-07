@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 
 import type { Route } from "./+types/root";
 import "./app.css";
+import { HomeHydrationSkeleton } from "./components/HomeHydrationSkeleton";
 import { MobileNavDrawer } from "./components/MobileNavDrawer";
 import { useMediaQuery } from "./lib/useMediaQuery";
 
@@ -291,6 +292,10 @@ useEffect(() => {
 
 export default function App() {
   return <Outlet />;
+}
+
+export function HydrateFallback() {
+  return <HomeHydrationSkeleton />;
 }
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {

@@ -398,6 +398,27 @@ function readStoredLocationMode(
   return "gps";
 }
 
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException
+    ? error.name === "AbortError"
+    : error instanceof Error && error.name === "AbortError";
+}
+
+function shouldLogHomeDataError(error: unknown): boolean {
+  if (isAbortError(error)) return false;
+  if (!(error instanceof Error)) return true;
+
+  return (
+    error.name !== "BackendPayloadError" && error.name !== "ForecastRateLimitError"
+  );
+}
+
+function logHomeDataError(error: unknown): void {
+  if (shouldLogHomeDataError(error)) {
+    console.error(error);
+  }
+}
+
 export default function Home() {
   const isClient = typeof window !== "undefined";
   const hasLoadedPreviewRef = useRef(false);
@@ -519,7 +540,7 @@ export default function Home() {
         setLocationContextError(null);
       },
       (error) => {
-        console.error(error);
+        logHomeDataError(error);
         setLocationMode("manual");
         setLocationState(manualArea ? "ready" : "needs_manual");
         setManualAreaPickerOpen(!manualArea);
@@ -567,7 +588,7 @@ export default function Home() {
         setLocationContextError(null);
       },
       (error) => {
-        console.error(error);
+        logHomeDataError(error);
         setDesktopGpsCoords(null);
         setDesktopLocationState("unavailable");
         setDesktopLocationMessage(
@@ -767,7 +788,7 @@ export default function Home() {
         if (!isMounted || nextOptions.length === 0) return;
         setLocationOptions(nextOptions);
       } catch (error) {
-        console.error(error);
+        logHomeDataError(error);
       }
     }
 
@@ -810,7 +831,9 @@ export default function Home() {
     async function loadPreview() {
       const isInitialLoad = !hasLoadedPreviewRef.current;
       const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), PREVIEW_REQUEST_TIMEOUT_MS);
+      const timeout = window.setTimeout(() => {
+        controller.abort(new DOMException("Home preview request timed out.", "AbortError"));
+      }, PREVIEW_REQUEST_TIMEOUT_MS);
 
       try {
         if (isInitialLoad) {
@@ -839,7 +862,7 @@ export default function Home() {
         setIsFallbackPreview(false);
         setPreviewError(null);
       } catch (error) {
-        console.error(error);
+        logHomeDataError(error);
         if (!isMounted) return;
 
         setPreviewItems(fallbackPreviewItems);
@@ -1077,8 +1100,13 @@ export default function Home() {
         });
         if (!isMounted) return;
         setLocationContext(nextContext);
+        if (nextContext.status !== "ok") {
+          setLocationContextError("Forecast is temporarily unavailable.");
+          setLocationContextErrorTone("neutral");
+          return;
+        }
       } catch (error) {
-        console.error(error);
+        logHomeDataError(error);
         if (!isMounted) return;
         if (isForecastRateLimitError(error)) {
           setLocationContextError("Forecast is temporarily rate-limited. Try again shortly.");
@@ -1163,7 +1191,7 @@ export default function Home() {
     locationContext?.source
   );
   const forecastSourceNotice = usesClientForecastFallback
-    ? "Client fallback is active for local testing. Live map animation is paused."
+    ? "Forecast fallback is active. Live map animation is paused while weather data reconnects."
     : null;
   const locationContextErrorClasses =
     locationContextErrorTone === "warning"

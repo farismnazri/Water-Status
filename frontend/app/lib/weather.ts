@@ -35,12 +35,13 @@ const LOCATION_CONTEXT_IN_FLIGHT_REQUESTS = new Map<
   Promise<WeatherLocationContext>
 >();
 const LOCATION_CONTEXT_RATE_LIMIT_COOLDOWNS = new Map<string, number>();
+const WEATHER_CLIENT_ENV = (import.meta as any)?.env as
+  | {
+      VITE_ENABLE_CLIENT_OPEN_METEO_FALLBACK?: string;
+    }
+  | undefined;
 const LOCATION_CONTEXT_ENABLE_CLIENT_FALLBACK =
-  (
-    ((import.meta as any)?.env?.VITE_ENABLE_CLIENT_OPEN_METEO_FALLBACK as
-      | string
-      | undefined) ?? ""
-  ).trim() === "1";
+  (WEATHER_CLIENT_ENV?.VITE_ENABLE_CLIENT_OPEN_METEO_FALLBACK ?? "").trim() === "1";
 
 class HttpStatusError extends Error {
   status: number;
@@ -523,7 +524,9 @@ function buildOpenMeteoLocationContext({
 
 async function fetchJsonWithTimeout(url: string, timeoutMs: number): Promise<Response> {
   const controller = new AbortController();
-  const timeout = globalThis.setTimeout(() => controller.abort(), timeoutMs);
+  const timeout = globalThis.setTimeout(() => {
+    controller.abort(new DOMException("Forecast request timed out.", "AbortError"));
+  }, timeoutMs);
 
   try {
     return await fetch(url, {
@@ -586,8 +589,12 @@ async function fetchBackendLocationForecastContext(
     throw new BackendPayloadError("Invalid backend forecast payload");
   }
 
-  if (payload.status !== "ok") {
-    throw new BackendPayloadError("Backend forecast is unavailable");
+  if (
+    payload.status !== "ok" &&
+    payload.status !== "error" &&
+    payload.status !== "unavailable"
+  ) {
+    throw new BackendPayloadError("Invalid backend forecast payload");
   }
 
   return payload as WeatherLocationContext;
@@ -743,7 +750,26 @@ export async function fetchLocationForecastContext({
   const backendUrl = `${API_BASE}/weather/location-context?${params.toString()}`;
   const requestPromise = (async () => {
     try {
-      return await fetchBackendLocationForecastContext(backendUrl);
+      const backendContext = await fetchBackendLocationForecastContext(backendUrl);
+      if (backendContext.status === "ok") {
+        return backendContext;
+      }
+
+      if (LOCATION_CONTEXT_ENABLE_CLIENT_FALLBACK) {
+        try {
+          return await fetchOpenMeteoLocationForecastContext({
+            latitude,
+            longitude,
+            radiusKm,
+            label,
+            mode,
+          });
+        } catch {
+          return backendContext;
+        }
+      }
+
+      return backendContext;
     } catch (error) {
       if (error instanceof HttpStatusError && error.status === 429) {
         LOCATION_CONTEXT_RATE_LIMIT_COOLDOWNS.set(
