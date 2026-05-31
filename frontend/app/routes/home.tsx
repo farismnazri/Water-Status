@@ -111,7 +111,8 @@ const previewSections = [
 ];
 
 const PREVIEW_REQUEST_TIMEOUT_MS = 10_000;
-const LOCATION_CONTEXT_REFRESH_INTERVAL_MS = 60_000;
+const LOCATION_CONTEXT_SUCCESS_REFRESH_INTERVAL_MS = 120_000;
+const LOCATION_CONTEXT_RETRY_INTERVAL_MS = 30_000;
 const MOBILE_HOME_TAB_STORAGE_KEY = "wsMobileHomeTab";
 const MOBILE_HOME_LOCATION_MODE_STORAGE_KEY = "wsMobileHomeLocationMode";
 const MOBILE_HOME_PREFERRED_AREA_STORAGE_KEY = "wsMobileHomePreferredArea";
@@ -416,6 +417,20 @@ function isAbortError(error: unknown): boolean {
     : error instanceof Error && error.name === "AbortError";
 }
 
+function buildForecastTargetKey(target: {
+  latitude: number;
+  longitude: number;
+  label: string;
+  mode: "gps" | "manual";
+}): string {
+  return [
+    target.latitude.toFixed(5),
+    target.longitude.toFixed(5),
+    target.mode,
+    target.label.trim().toLowerCase(),
+  ].join("|");
+}
+
 function shouldLogHomeDataError(error: unknown): boolean {
   if (isAbortError(error)) return false;
   if (!(error instanceof Error)) return true;
@@ -499,8 +514,14 @@ export default function Home() {
   const [locationContext, setLocationContext] = useState<WeatherLocationContext | null>(
     null
   );
+  const locationContextCacheRef = useRef<Map<string, WeatherLocationContext>>(
+    new Map()
+  );
   const [locationContextLoading, setLocationContextLoading] = useState(false);
   const [locationContextError, setLocationContextError] = useState<string | null>(null);
+  const [locationContextNotice, setLocationContextNotice] = useState<string | null>(
+    null
+  );
   const [locationContextErrorTone, setLocationContextErrorTone] = useState<
     "warning" | "neutral"
   >("neutral");
@@ -1086,6 +1107,7 @@ export default function Home() {
       setLocationContext(null);
       setLocationContextLoading(false);
       setLocationContextError(null);
+      setLocationContextNotice(null);
       setLocationContextErrorTone("neutral");
       return;
     }
@@ -1097,12 +1119,43 @@ export default function Home() {
 
     let isMounted = true;
     const target = activeForecastTarget;
+    const targetKey = buildForecastTargetKey(target);
+    let refreshTimer: number | null = null;
+    let isRequestInFlight = false;
+
+    const scheduleNextRefresh = (delayMs: number) => {
+      if (!isMounted) return;
+      if (refreshTimer !== null) {
+        window.clearTimeout(refreshTimer);
+      }
+      refreshTimer = window.setTimeout(() => {
+        void loadLocationContext();
+      }, delayMs);
+    };
+
+    const cachedContext = locationContextCacheRef.current.get(targetKey);
+    if (cachedContext) {
+      setLocationContext(cachedContext);
+      setLocationContextError(null);
+      setLocationContextNotice(null);
+      setLocationContextErrorTone("neutral");
+    } else {
+      setLocationContext(null);
+      setLocationContextError(null);
+      setLocationContextNotice(null);
+      setLocationContextErrorTone("neutral");
+    }
 
     async function loadLocationContext() {
+      if (!isMounted || isRequestInFlight) return;
+      isRequestInFlight = true;
+      const hasCachedContext = Boolean(locationContextCacheRef.current.get(targetKey));
+
       try {
-        setLocationContextLoading(true);
-        setLocationContextError(null);
-        setLocationContextErrorTone("neutral");
+        if (!hasCachedContext) {
+          setLocationContextLoading(true);
+          setLocationContextError(null);
+        }
         const nextContext = await fetchLocationForecastContext({
           latitude: target.latitude,
           longitude: target.longitude,
@@ -1111,37 +1164,87 @@ export default function Home() {
           mode: target.mode,
         });
         if (!isMounted) return;
-        setLocationContext(nextContext);
-        if (nextContext.status !== "ok") {
-          setLocationContextError("Forecast is temporarily unavailable.");
+        if (nextContext.status === "ok") {
+          locationContextCacheRef.current.set(targetKey, nextContext);
+          setLocationContext(nextContext);
+          setLocationContextError(null);
+          setLocationContextNotice(null);
           setLocationContextErrorTone("neutral");
+          scheduleNextRefresh(LOCATION_CONTEXT_SUCCESS_REFRESH_INTERVAL_MS);
           return;
         }
+
+        const cached = locationContextCacheRef.current.get(targetKey);
+        if (cached) {
+          setLocationContext(cached);
+          setLocationContextError(null);
+          setLocationContextNotice(
+            "Showing the latest available forecast while refresh catches up."
+          );
+          setLocationContextErrorTone("neutral");
+          scheduleNextRefresh(LOCATION_CONTEXT_SUCCESS_REFRESH_INTERVAL_MS);
+          return;
+        }
+
+        setLocationContext(null);
+        setLocationContextNotice(null);
+        setLocationContextError("Forecast is temporarily unavailable.");
+        setLocationContextErrorTone("neutral");
+        scheduleNextRefresh(LOCATION_CONTEXT_RETRY_INTERVAL_MS);
       } catch (error) {
         logHomeDataError(error);
         if (!isMounted) return;
+        const cached = locationContextCacheRef.current.get(targetKey);
+        if (cached) {
+          setLocationContext(cached);
+          setLocationContextError(null);
+          if (isForecastRateLimitError(error)) {
+            setLocationContextNotice(
+              `Showing the latest available forecast while refresh is rate-limited (${error.retryAfterSeconds}s).`
+            );
+            setLocationContextErrorTone("warning");
+            scheduleNextRefresh(
+              Math.max(
+                LOCATION_CONTEXT_SUCCESS_REFRESH_INTERVAL_MS,
+                error.retryAfterSeconds * 1000
+              )
+            );
+          } else {
+            setLocationContextNotice(
+              "Showing the latest available forecast while refresh catches up."
+            );
+            setLocationContextErrorTone("neutral");
+            scheduleNextRefresh(LOCATION_CONTEXT_SUCCESS_REFRESH_INTERVAL_MS);
+          }
+          return;
+        }
+
+        setLocationContextNotice(null);
         if (isForecastRateLimitError(error)) {
           setLocationContextError("Forecast is temporarily rate-limited. Try again shortly.");
           setLocationContextErrorTone("warning");
+          scheduleNextRefresh(
+            Math.max(LOCATION_CONTEXT_RETRY_INTERVAL_MS, error.retryAfterSeconds * 1000)
+          );
           return;
         }
 
         setLocationContextError("Forecast is temporarily unavailable.");
         setLocationContextErrorTone("neutral");
+        scheduleNextRefresh(LOCATION_CONTEXT_RETRY_INTERVAL_MS);
       } finally {
+        isRequestInFlight = false;
         if (isMounted) setLocationContextLoading(false);
       }
     }
 
-    loadLocationContext();
-    const refresh = window.setInterval(
-      loadLocationContext,
-      LOCATION_CONTEXT_REFRESH_INTERVAL_MS
-    );
+    void loadLocationContext();
 
     return () => {
       isMounted = false;
-      window.clearInterval(refresh);
+      if (refreshTimer !== null) {
+        window.clearTimeout(refreshTimer);
+      }
     };
   }, [activeForecastTarget, isPageVisible]);
 
@@ -1202,6 +1305,10 @@ export default function Home() {
     locationContextErrorTone === "warning"
       ? "border-amber-200 bg-amber-50 text-amber-800"
       : "border-slate-200/80 bg-white/82 text-slate-600";
+  const hasUsableLocationContext = locationContext?.status === "ok";
+  const blockingLocationContextError = hasUsableLocationContext
+    ? null
+    : locationContextError;
   const mobileLocationDisplayLabel =
     mobileLocationTarget?.label || manualArea?.label || "Choose an area";
   const selectedManualAreaLabel = manualArea?.label ?? "";
@@ -1226,14 +1333,21 @@ export default function Home() {
       <div className="ws-skeleton h-4 w-44 rounded-full" />
       <div className="ws-skeleton h-52 rounded-[1.3rem]" />
     </div>
-  ) : locationContextError ? (
+  ) : blockingLocationContextError ? (
     <div
       className={`rounded-[1.7rem] border px-4 py-4 text-sm shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${locationContextErrorClasses}`}
     >
-      {locationContextError}
+      {blockingLocationContextError}
     </div>
   ) : (
     <div className="space-y-3">
+      {locationContextNotice ? (
+        <div
+          className={`rounded-[1.25rem] border px-3.5 py-2.5 text-xs ${locationContextErrorClasses}`}
+        >
+          {locationContextNotice}
+        </div>
+      ) : null}
       <Suspense
         fallback={
           <div className="space-y-3 rounded-[1.7rem] border border-[var(--ws-border-subtle)] bg-white/86 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
@@ -1255,7 +1369,8 @@ export default function Home() {
         Updated{" "}
         {formatShortDate(
           locationContext?.generated_at || currentLocationSummary?.time || null
-        )}
+        )}{" "}
+        {locationContextNotice ? "(stale)" : ""}
       </p>
     </div>
   );
@@ -1271,8 +1386,8 @@ export default function Home() {
       frame={currentLocationFrame}
       layer={mobileMapLayer}
       isClient={isClient}
-      loading={locationContextLoading}
-      error={locationContextError}
+      loading={locationContextLoading && !locationContext}
+      error={blockingLocationContextError}
       paused={mobileMapPaused}
       onPausedChange={setMobileMapPaused}
       onLayerChange={setMobileMapLayer}
@@ -1299,12 +1414,15 @@ export default function Home() {
             <MobileDailySummaryCard
               CurrentLocationWeatherIcon={CurrentLocationWeatherIcon}
               displayLocationLabel={mobileLocationDisplayLabel}
-              error={locationContextError}
+              error={null}
               errorClasses={locationContextErrorClasses}
               feelsLikeLabel={formatTemperature(
                 currentLocationSummary?.apparent_temperature
               )}
-              isLoading={locationContextLoading && !locationContext}
+              isLoading={
+                (locationContextLoading && !locationContext) ||
+                (!locationContext && Boolean(blockingLocationContextError))
+              }
               locationMessage={locationMessage}
               locationMode={locationMode}
               locationOptions={locationOptions}
@@ -1532,14 +1650,21 @@ export default function Home() {
                 {desktopLocationMessage ||
                   "Allow location access or click a live station below to pin its forecast."}
               </div>
-            ) : locationContextError ? (
+            ) : blockingLocationContextError ? (
               <div
                 className={`mt-4 rounded-[1.25rem] border px-4 py-3 text-sm ${locationContextErrorClasses}`}
               >
-                {locationContextError}
+                {blockingLocationContextError}
               </div>
             ) : (
               <>
+                {locationContextNotice ? (
+                  <div
+                    className={`mt-4 rounded-[1.25rem] border px-4 py-3 text-sm ${locationContextErrorClasses}`}
+                  >
+                    {locationContextNotice}
+                  </div>
+                ) : null}
                 <div className="mt-1 flex items-end justify-between gap-4">
                   <div>
                     <p className="text-[2.35rem] font-semibold leading-none tracking-tight text-slate-950">
@@ -1607,7 +1732,8 @@ export default function Home() {
                   Updated{" "}
                   {formatShortDate(
                     locationContext?.generated_at || currentLocationSummary?.time || null
-                  )}
+                  )}{" "}
+                  {locationContextNotice ? "(stale)" : ""}
                 </p>
               </>
             )}
