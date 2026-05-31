@@ -5,7 +5,6 @@ import {
   ComposedChart,
   Line,
   ReferenceLine,
-  ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
@@ -20,6 +19,10 @@ import {
 } from "../lib/weather";
 
 export type ForecastTimelinePoint = WeatherLocationHourlyPoint;
+const TIMELINE_X_TICKS = [-6, -4, -2, 0, 2, 4, 6] as const;
+const TIMELINE_X_DOMAIN_TEMPERATURE: [number, number] = [-6.2, 6.2];
+const TIMELINE_X_DOMAIN_RAIN: [number, number] = [-6, 6];
+const RAIN_AXIS_LEVEL_COUNT = 5;
 
 type ForecastTimelineCardProps = {
   data: ForecastTimelinePoint[];
@@ -39,67 +42,21 @@ function formatChartHourLabel(value: string | null | undefined): string {
     .replace(/\s/g, "");
 }
 
+function formatChartHourTick(value: string | null | undefined): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "—";
+  return parsed.toLocaleTimeString([], {
+    hour: "2-digit",
+    hour12: false,
+  });
+}
+
 function formatRainTick(value: number): string {
   if (!Number.isFinite(value)) return "";
   if (Number.isInteger(value)) return `${value}`;
   if (Math.abs(value) >= 1) return value.toFixed(1).replace(/\.0$/, "");
   return value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
-}
-
-function buildAxisTicks(
-  min: number,
-  max: number,
-  preferredTickCount: number,
-  {
-    allowFractional = false,
-    clampAtZero = false,
-  }: {
-    allowFractional?: boolean;
-    clampAtZero?: boolean;
-  } = {}
-): number[] {
-  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
-    return [min, max].filter(Number.isFinite);
-  }
-
-  const safeMin = clampAtZero ? Math.max(0, min) : min;
-  const span = max - safeMin;
-  const rawStep = span / Math.max(1, preferredTickCount - 1);
-
-  if (!Number.isFinite(rawStep) || rawStep <= 0) {
-    return [safeMin, max];
-  }
-
-  const magnitude = 10 ** Math.floor(Math.log10(rawStep));
-  const scaled = rawStep / magnitude;
-  let niceStep = 1;
-
-  if (allowFractional) {
-    if (scaled <= 1) niceStep = 1;
-    else if (scaled <= 2) niceStep = 2;
-    else if (scaled <= 2.5) niceStep = 2.5;
-    else if (scaled <= 5) niceStep = 5;
-    else niceStep = 10;
-  } else {
-    if (scaled <= 1) niceStep = 1;
-    else if (scaled <= 2) niceStep = 2;
-    else if (scaled <= 5) niceStep = 5;
-    else niceStep = 10;
-  }
-
-  const step = niceStep * magnitude;
-  const tickStart = clampAtZero ? 0 : Math.ceil(safeMin / step) * step;
-  const ticks: number[] = [];
-
-  for (let value = tickStart; value <= max + step * 0.5; value += step) {
-    ticks.push(Number(value.toFixed(2)));
-  }
-
-  if (ticks.length < 2) {
-    return [safeMin, max].map((value) => Number(value.toFixed(2)));
-  }
-
-  return ticks;
 }
 
 export function ForecastTimelineCard({
@@ -112,7 +69,9 @@ export function ForecastTimelineCard({
   const chartViewportRef = useRef<HTMLDivElement | null>(null);
   const chartData = useMemo(
     () =>
-      data.map((point) => ({
+      [...data]
+        .sort((pointA, pointB) => pointA.offset_hours - pointB.offset_hours)
+        .map((point) => ({
         ...point,
         precip_value:
           point.precipitation_amount ?? point.rain_amount ?? null,
@@ -122,24 +81,25 @@ export function ForecastTimelineCard({
     [data]
   );
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
-  const [hasChartViewport, setHasChartViewport] = useState(false);
+  const [chartViewportSize, setChartViewportSize] = useState({
+    width: 0,
+    height: 0,
+  });
+  const hasChartViewport = chartViewportSize.width > 0 && chartViewportSize.height > 0;
 
-  const chartTickIndexes = useMemo(() => {
-    if (chartData.length === 0) return new Set<number>();
+  const axisTickLabelByOffset = useMemo(() => {
+    const labels = new Map<number, string>();
+    chartData.forEach((point) => {
+      if (!Number.isFinite(point.offset_hours)) return;
+      const roundedOffset = Math.round(point.offset_hours);
+      if (roundedOffset === 0) {
+        labels.set(0, "Now");
+        return;
+      }
 
-    const nowIndex = chartData.findIndex((point) => point.offset_hours === 0);
-    const lastIndex = chartData.length - 1;
-    const rawIndexes = [
-      0,
-      nowIndex >= 0 ? nowIndex - 3 : 3,
-      nowIndex >= 0 ? nowIndex : Math.floor(lastIndex / 2),
-      nowIndex >= 0 ? nowIndex + 3 : Math.max(lastIndex - 3, 0),
-      lastIndex,
-    ];
-
-    return new Set(
-      rawIndexes.filter((index) => index >= 0 && index <= lastIndex)
-    );
+      labels.set(roundedOffset, formatChartHourTick(point.time || null));
+    });
+    return labels;
   }, [chartData]);
 
   const defaultActiveIndex = useMemo(() => {
@@ -193,7 +153,10 @@ export function ForecastTimelineCard({
 
     const updateViewportState = () => {
       const { width, height } = node.getBoundingClientRect();
-      setHasChartViewport(width > 0 && height > 0);
+      setChartViewportSize({
+        width: Math.max(0, Math.floor(width)),
+        height: Math.max(0, Math.floor(height)),
+      });
     };
 
     updateViewportState();
@@ -223,6 +186,24 @@ export function ForecastTimelineCard({
     if (maxValue <= 5) return Number((Math.ceil(maxValue * 2) / 2).toFixed(1));
     return Math.ceil(maxValue * 1.15);
   }, [chartData]);
+  const rainStep = useMemo(
+    () => rainDomainMax / (RAIN_AXIS_LEVEL_COUNT - 1),
+    [rainDomainMax]
+  );
+  const rainTicks = useMemo(
+    () =>
+      Array.from({ length: RAIN_AXIS_LEVEL_COUNT }, (_, index) =>
+        Number((index * rainStep).toFixed(2))
+      ),
+    [rainStep]
+  );
+  const probabilityTicks = useMemo(
+    () =>
+      Array.from({ length: RAIN_AXIS_LEVEL_COUNT }, (_, index) =>
+        Math.round((index * 100) / (RAIN_AXIS_LEVEL_COUNT - 1))
+      ),
+    []
+  );
 
   const temperatureDomain = useMemo<[number, number]>(() => {
     const values = chartData
@@ -243,10 +224,6 @@ export function ForecastTimelineCard({
     return [lowerBound, upperBound];
   }, [chartData]);
 
-  const rainTicks = useMemo(
-    () => buildAxisTicks(0, rainDomainMax, 4, { allowFractional: true, clampAtZero: true }),
-    [rainDomainMax]
-  );
   const temperatureTicks = useMemo(
     () => {
       const ticks: number[] = [];
@@ -293,7 +270,7 @@ export function ForecastTimelineCard({
       <div className={`flex items-center justify-between ${isCompact ? "gap-2.5" : "gap-3"}`}>
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-            {metric === "rain" ? "Precip 12h" : "Temp 12h"}
+            {metric === "rain" ? "Precip 12h" : "Temperature (°C)"}
           </p>
           <p className={`${isCompact ? "mt-0.5" : "mt-1"} text-[11px] text-slate-500`}>
             6h back and 6h ahead, in 1-hour steps.
@@ -334,143 +311,166 @@ export function ForecastTimelineCard({
           {readout}
         </div>
 
-        <div ref={chartViewportRef} className={isCompact ? "h-48" : "h-40"}>
+        <div
+          ref={chartViewportRef}
+          className={isCompact ? "h-48 min-h-[12rem]" : "h-40 min-h-[10rem]"}
+        >
           {hasChartViewport ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart
-                data={chartData}
-                margin={{
-                  top: isCompact ? 6 : 8,
-                  right: metric === "rain" ? 10 : 4,
-                  left: metric === "temperature" ? (isCompact ? 18 : 20) : isCompact ? 6 : 10,
-                  bottom: isCompact ? 10 : 14,
+            <ComposedChart
+              width={chartViewportSize.width}
+              height={chartViewportSize.height}
+              data={chartData}
+              margin={{
+                top: isCompact ? 6 : 8,
+                right: metric === "rain" ? 10 : 8,
+                left: metric === "temperature" ? (isCompact ? 2 : 4) : isCompact ? 6 : 10,
+                bottom: isCompact ? 10 : 14,
+              }}
+              onMouseMove={updateActiveIndex}
+              onMouseLeave={() => setActiveIndex(defaultActiveIndex)}
+              onTouchStart={updateActiveIndex}
+              onTouchMove={updateActiveIndex}
+              onClick={updateActiveIndex}
+            >
+              <CartesianGrid
+                stroke="rgba(148,163,184,0.16)"
+                vertical={false}
+              />
+              <XAxis
+                type="number"
+                dataKey="offset_hours"
+                domain={
+                  metric === "temperature"
+                    ? TIMELINE_X_DOMAIN_TEMPERATURE
+                    : TIMELINE_X_DOMAIN_RAIN
+                }
+                ticks={TIMELINE_X_TICKS as unknown as number[]}
+                axisLine={
+                  metric === "temperature"
+                    ? { stroke: "rgba(148,163,184,0.32)" }
+                    : false
+                }
+                tickLine={false}
+                interval={0}
+                height={isCompact ? 30 : 34}
+                tick={{ fill: "#64748b", fontSize: 11 }}
+                tickMargin={isCompact ? 8 : 10}
+                tickFormatter={(value) => {
+                  const numericValue =
+                    typeof value === "number" ? value : Number(value);
+                  const roundedOffset = Number.isFinite(numericValue)
+                    ? Math.round(numericValue)
+                    : Number.NaN;
+                  if (!Number.isFinite(roundedOffset)) return "";
+                  if (roundedOffset === 0) return "Now";
+
+                  const timeLabel = axisTickLabelByOffset.get(roundedOffset);
+                  if (timeLabel && timeLabel !== "—") return timeLabel;
+
+                  return `${roundedOffset > 0 ? "+" : ""}${roundedOffset}h`;
                 }}
-                onMouseMove={updateActiveIndex}
-                onMouseLeave={() => setActiveIndex(defaultActiveIndex)}
-                onTouchStart={updateActiveIndex}
-                onTouchMove={updateActiveIndex}
-                onClick={updateActiveIndex}
-              >
-                <CartesianGrid
-                  stroke="rgba(148,163,184,0.16)"
-                  vertical={false}
-                />
-                <XAxis
-                  dataKey="display_label"
-                  axisLine={
-                    metric === "temperature"
-                      ? { stroke: "rgba(148,163,184,0.32)" }
-                      : false
-                  }
-                  tickLine={false}
-                  interval={0}
-                  height={isCompact ? 30 : 34}
-                  padding={{ left: 8, right: 8 }}
-                  tick={{ fill: "#64748b", fontSize: 11 }}
-                  tickMargin={isCompact ? 8 : 10}
-                  tickFormatter={(value, index) =>
-                    chartTickIndexes.has(index) ? value : ""
-                  }
-                />
-                <Tooltip
-                  cursor={{ stroke: "rgba(14,165,233,0.24)", strokeWidth: 1 }}
-                  content={() => null}
-                />
-                {metric === "rain" ? (
-                  <>
-                    <YAxis
-                      yAxisId="rain"
-                      width={42}
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: "#64748b", fontSize: 11 }}
-                      tickMargin={6}
-                      allowDecimals
-                      domain={[0, rainDomainMax]}
-                      ticks={rainTicks}
-                      tickFormatter={(value) => formatRainTick(value)}
-                    />
-                    <YAxis
-                      yAxisId="probability"
-                      orientation="right"
-                      width={42}
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: "#64748b", fontSize: 11 }}
-                      tickMargin={6}
-                      domain={[0, 100]}
-                      tickFormatter={(value) => `${Math.round(value)}%`}
-                    />
-                  </>
-                ) : (
+              />
+              <Tooltip
+                cursor={{ stroke: "rgba(14,165,233,0.24)", strokeWidth: 1 }}
+                content={() => null}
+              />
+              {metric === "rain" ? (
+                <>
                   <YAxis
-                    yAxisId="temperature"
-                    width={54}
-                    axisLine={{ stroke: "rgba(148,163,184,0.32)" }}
-                    tickLine={{ stroke: "rgba(148,163,184,0.32)" }}
+                    yAxisId="rain"
+                    width={42}
+                    axisLine={false}
+                    tickLine={false}
                     tick={{ fill: "#64748b", fontSize: 11 }}
                     tickMargin={6}
+                    allowDecimals
+                    domain={[0, rainDomainMax]}
+                    ticks={rainTicks}
                     interval={0}
-                    allowDecimals={false}
-                    domain={temperatureDomain}
-                    ticks={temperatureTicks}
-                    tickFormatter={(value) => `${Math.round(value)}°`}
+                    tickFormatter={(value) => formatRainTick(value)}
                   />
-                )}
-                <ReferenceLine
-                  x="Now"
-                  stroke="rgba(14,165,233,0.42)"
-                  strokeDasharray="4 4"
+                  <YAxis
+                    yAxisId="probability"
+                    orientation="right"
+                    width={42}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: "#64748b", fontSize: 11 }}
+                    tickMargin={6}
+                    domain={[0, 100]}
+                    ticks={probabilityTicks}
+                    interval={0}
+                    tickFormatter={(value) => `${Math.round(value)}%`}
+                  />
+                </>
+              ) : (
+                <YAxis
+                  yAxisId="temperature"
+                  width={46}
+                  axisLine={{ stroke: "rgba(148,163,184,0.32)" }}
+                  tickLine={{ stroke: "rgba(148,163,184,0.32)" }}
+                  tick={{ fill: "#64748b", fontSize: 11 }}
+                  tickMargin={6}
+                  interval={0}
+                  allowDecimals={false}
+                  domain={temperatureDomain}
+                  ticks={temperatureTicks}
+                  tickFormatter={(value) => `${Math.round(value)}°C`}
                 />
-                {activePoint ? (
-                  <ReferenceLine
-                    x={activePoint.display_label}
-                    stroke="rgba(15,23,42,0.18)"
-                    strokeDasharray="3 4"
-                  />
-                ) : null}
+              )}
+              <ReferenceLine
+                x={0}
+                stroke="rgba(14,165,233,0.42)"
+                strokeDasharray="4 4"
+              />
+              {activePoint ? (
+                <ReferenceLine
+                  x={activePoint.offset_hours}
+                  stroke="rgba(15,23,42,0.18)"
+                  strokeDasharray="3 4"
+                />
+              ) : null}
 
-                {metric === "rain" ? (
-                  <>
-                    <Bar
-                      yAxisId="rain"
-                      dataKey="precip_value"
-                      name="Precip amount"
-                      fill="#38bdf8"
-                      radius={[8, 8, 0, 0]}
-                      minPointSize={6}
-                      barSize={isCompact ? 13 : 15}
-                      isAnimationActive={false}
-                    />
-                    <Line
-                      yAxisId="probability"
-                      dataKey="precipitation_probability"
-                      name="Precip chance"
-                      type="monotone"
-                      stroke="#0f172a"
-                      strokeWidth={2}
-                      dot={{ r: 3.5, fill: "#0f172a" }}
-                      activeDot={{ r: 5, fill: "#0f172a" }}
-                      connectNulls
-                      isAnimationActive={false}
-                    />
-                  </>
-                ) : (
+              {metric === "rain" ? (
+                <>
+                  <Bar
+                    yAxisId="rain"
+                    dataKey="precip_value"
+                    name="Precip amount"
+                    fill="#38bdf8"
+                    radius={[8, 8, 0, 0]}
+                    minPointSize={6}
+                    barSize={isCompact ? 13 : 15}
+                    isAnimationActive={false}
+                  />
                   <Line
-                    yAxisId="temperature"
-                    dataKey="temperature_2m"
-                    name="Temperature"
+                    yAxisId="probability"
+                    dataKey="precipitation_probability"
+                    name="Precip chance"
                     type="monotone"
-                    stroke="#f97316"
-                    strokeWidth={2.5}
-                    dot={{ r: 3.5, fill: "#f97316" }}
-                    activeDot={{ r: 5.5, fill: "#f97316" }}
+                    stroke="#0f172a"
+                    strokeWidth={2}
+                    dot={{ r: 3.5, fill: "#0f172a" }}
+                    activeDot={{ r: 5, fill: "#0f172a" }}
                     connectNulls
                     isAnimationActive={false}
                   />
-                )}
-              </ComposedChart>
-            </ResponsiveContainer>
+                </>
+              ) : (
+                <Line
+                  yAxisId="temperature"
+                  dataKey="temperature_2m"
+                  name="Temperature"
+                  type="monotone"
+                  stroke="#f97316"
+                  strokeWidth={2.5}
+                  dot={{ r: 3.5, fill: "#f97316" }}
+                  activeDot={{ r: 5.5, fill: "#f97316" }}
+                  connectNulls
+                  isAnimationActive={false}
+                />
+              )}
+            </ComposedChart>
           ) : (
             <div className="ws-skeleton h-full rounded-[1.1rem]" />
           )}
