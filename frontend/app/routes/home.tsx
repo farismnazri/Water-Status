@@ -122,6 +122,20 @@ const MOBILE_TAB_SWIPE_INTENT_PX = 16;
 const MOBILE_TAB_SWIPE_INTENT_RATIO = 1.2;
 const MOBILE_TAB_EDGE_DAMPING = 0.35;
 const MOBILE_TAB_PANEL_GAP_PX = 10;
+const HOME_PREVIEW_CACHE_STORAGE_KEY = "wsHomePreviewCacheV1";
+const HOME_PREVIEW_CACHE_MAX_AGE_MS = 20 * 60_000;
+const LOCATION_CONTEXT_CACHE_STORAGE_KEY = "wsHomeLocationContextCacheV1";
+const LOCATION_CONTEXT_CACHE_MAX_AGE_MS = 45 * 60_000;
+const LOCATION_CONTEXT_CACHE_MAX_ENTRIES = 8;
+
+type LocationContextCacheValue = {
+  context: WeatherLocationContext;
+  savedAt: number;
+};
+
+type LocationContextCacheStorageEntry = LocationContextCacheValue & {
+  key: string;
+};
 
 const LazyForecastTimelineCard = lazy(() =>
   import("../components/ForecastTimelineCard").then((module) => ({
@@ -221,6 +235,170 @@ const fallbackPreviewItems: HomePreviewItem[] = [
     longitude: 101.7932,
   },
 ];
+
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isSensorType(value: unknown): value is SensorType {
+  return value === "rain" || value === "water_level" || value === "temperature";
+}
+
+function isWeatherLocationContextValue(
+  value: unknown
+): value is WeatherLocationContext {
+  if (!isObjectRecord(value)) return false;
+  if (
+    value.status !== "ok" &&
+    value.status !== "unavailable" &&
+    value.status !== "error"
+  ) {
+    return false;
+  }
+
+  const location = value.location;
+  if (!isObjectRecord(location)) return false;
+  if (typeof location.label !== "string" || !location.label.trim()) return false;
+  if (!isFiniteNumber(location.latitude) || !isFiniteNumber(location.longitude)) {
+    return false;
+  }
+
+  return true;
+}
+
+function normalizePreviewCacheItems(value: unknown): HomePreviewItem[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item) => {
+    if (!isObjectRecord(item)) return [];
+    if (typeof item.id !== "string" || !item.id.trim()) return [];
+    if (typeof item.name !== "string" || !item.name.trim()) return [];
+    if (typeof item.location !== "string" || !item.location.trim()) return [];
+    if (!isSensorType(item.type)) return [];
+    if (typeof item.unit !== "string") return [];
+
+    const nextItem: HomePreviewItem = {
+      id: item.id,
+      name: item.name,
+      location: item.location,
+      type: item.type,
+      unit: item.unit,
+      latitude: isFiniteNumber(item.latitude) ? item.latitude : null,
+      longitude: isFiniteNumber(item.longitude) ? item.longitude : null,
+      value: isFiniteNumber(item.value) ? item.value : null,
+      timestamp: typeof item.timestamp === "string" ? item.timestamp : null,
+      source: typeof item.source === "string" ? item.source : undefined,
+    };
+
+    return [nextItem];
+  });
+}
+
+function readCachedHomePreviewItems(): HomePreviewItem[] | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(HOME_PREVIEW_CACHE_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!isObjectRecord(parsed) || !isFiniteNumber(parsed.savedAt)) return null;
+    if (Date.now() - parsed.savedAt > HOME_PREVIEW_CACHE_MAX_AGE_MS) return null;
+
+    const items = normalizePreviewCacheItems(parsed.items);
+    return items.length > 0 ? items : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedHomePreviewItems(items: HomePreviewItem[]): void {
+  if (typeof window === "undefined" || items.length === 0) return;
+
+  try {
+    window.localStorage.setItem(
+      HOME_PREVIEW_CACHE_STORAGE_KEY,
+      JSON.stringify({
+        savedAt: Date.now(),
+        items,
+      })
+    );
+  } catch {
+    // Storage write failures should not block rendering.
+  }
+}
+
+function readCachedLocationContextEntries(): LocationContextCacheStorageEntry[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = window.localStorage.getItem(LOCATION_CONTEXT_CACHE_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!isObjectRecord(parsed) || !Array.isArray(parsed.entries)) return [];
+
+    const now = Date.now();
+    const entries = parsed.entries
+      .flatMap((entry): LocationContextCacheStorageEntry[] => {
+        if (!isObjectRecord(entry)) return [];
+        if (typeof entry.key !== "string" || !entry.key.trim()) return [];
+        if (!isFiniteNumber(entry.savedAt)) return [];
+        if (now - entry.savedAt > LOCATION_CONTEXT_CACHE_MAX_AGE_MS) return [];
+        if (!isWeatherLocationContextValue(entry.context)) return [];
+
+        return [
+          {
+            key: entry.key,
+            savedAt: entry.savedAt,
+            context: entry.context,
+          },
+        ];
+      })
+      .sort((a, b) => b.savedAt - a.savedAt)
+      .slice(0, LOCATION_CONTEXT_CACHE_MAX_ENTRIES);
+
+    return entries;
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedLocationContextEntries(
+  entries: LocationContextCacheStorageEntry[]
+): void {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(
+      LOCATION_CONTEXT_CACHE_STORAGE_KEY,
+      JSON.stringify({
+        savedAt: Date.now(),
+        entries,
+      })
+    );
+  } catch {
+    // Storage write failures should not block rendering.
+  }
+}
+
+function getMostRecentLocationContextFromCache(
+  cache: Map<string, LocationContextCacheValue>
+): WeatherLocationContext | null {
+  let latestContext: WeatherLocationContext | null = null;
+  let latestSavedAt = Number.NEGATIVE_INFINITY;
+
+  cache.forEach((entry) => {
+    if (entry.savedAt > latestSavedAt) {
+      latestSavedAt = entry.savedAt;
+      latestContext = entry.context;
+    }
+  });
+
+  return latestContext;
+}
 
 function formatReadingValue(value: number): string {
   if (!Number.isFinite(value)) return "—";
@@ -424,8 +602,8 @@ function buildForecastTargetKey(target: {
   mode: "gps" | "manual";
 }): string {
   return [
-    target.latitude.toFixed(5),
-    target.longitude.toFixed(5),
+    target.latitude.toFixed(3),
+    target.longitude.toFixed(3),
     target.mode,
     target.label.trim().toLowerCase(),
   ].join("|");
@@ -449,6 +627,7 @@ function logHomeDataError(error: unknown): void {
 export default function Home() {
   const isClient = typeof window !== "undefined";
   const hasLoadedPreviewRef = useRef(false);
+  const hasHydratedLocalCachesRef = useRef(false);
   const mapPauseTimeoutRef = useRef<number | null>(null);
   const mobileTabSwipeRef = useRef<{
     startX: number;
@@ -468,6 +647,7 @@ export default function Home() {
   const [mobileTabDragOffsetPx, setMobileTabDragOffsetPx] = useState(0);
   const [mobileTabIsDragging, setMobileTabIsDragging] = useState(false);
   const [previewItems, setPreviewItems] = useState<HomePreviewItem[]>([]);
+  const previewItemsRef = useRef<HomePreviewItem[]>([]);
   const [previewLoading, setPreviewLoading] = useState(true);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [isFallbackPreview, setIsFallbackPreview] = useState(false);
@@ -514,7 +694,8 @@ export default function Home() {
   const [locationContext, setLocationContext] = useState<WeatherLocationContext | null>(
     null
   );
-  const locationContextCacheRef = useRef<Map<string, WeatherLocationContext>>(
+  const locationContextStateRef = useRef<WeatherLocationContext | null>(null);
+  const locationContextCacheRef = useRef<Map<string, LocationContextCacheValue>>(
     new Map()
   );
   const [locationContextLoading, setLocationContextLoading] = useState(false);
@@ -804,6 +985,47 @@ export default function Home() {
   }, [isClient, manualArea]);
 
   useEffect(() => {
+    previewItemsRef.current = previewItems;
+  }, [previewItems]);
+
+  useEffect(() => {
+    locationContextStateRef.current = locationContext;
+  }, [locationContext]);
+
+  useEffect(() => {
+    if (!isClient || hasHydratedLocalCachesRef.current) return;
+    hasHydratedLocalCachesRef.current = true;
+
+    const cachedPreviewItems = readCachedHomePreviewItems();
+    if (cachedPreviewItems && cachedPreviewItems.length > 0) {
+      setPreviewItems(cachedPreviewItems);
+      setPreviewLoading(false);
+      setPreviewError(null);
+      setIsFallbackPreview(false);
+    }
+
+    const cachedLocationContextEntries = readCachedLocationContextEntries();
+    if (cachedLocationContextEntries.length === 0) return;
+
+    locationContextCacheRef.current = new Map(
+      cachedLocationContextEntries.map((entry) => [
+        entry.key,
+        { context: entry.context, savedAt: entry.savedAt },
+      ])
+    );
+
+    const latestCachedContext = cachedLocationContextEntries[0]?.context;
+    if (!latestCachedContext) return;
+
+    setLocationContext((current) => current ?? latestCachedContext);
+    setLocationContextNotice(
+      (current) => current ?? "Showing a recent forecast snapshot while live data loads."
+    );
+    setLocationContextError(null);
+    setLocationContextErrorTone("neutral");
+  }, [isClient]);
+
+  useEffect(() => {
     let isMounted = true;
     const controller = new AbortController();
 
@@ -860,17 +1082,37 @@ export default function Home() {
     }
 
     let isMounted = true;
+    let refreshTimer: number | null = null;
+    let isRequestInFlight = false;
 
-    async function loadPreview() {
-      const isInitialLoad = !hasLoadedPreviewRef.current;
+    const scheduleNextRefresh = () => {
+      if (!isMounted) return;
+      if (refreshTimer !== null) {
+        window.clearTimeout(refreshTimer);
+      }
+      refreshTimer = window.setTimeout(() => {
+        void loadPreview(false);
+      }, 60_000);
+    };
+
+    async function loadPreview(isInitialLoad: boolean) {
+      if (!isMounted || isRequestInFlight) return;
+      isRequestInFlight = true;
       const controller = new AbortController();
       const timeout = window.setTimeout(() => {
         controller.abort(new DOMException("Home preview request timed out.", "AbortError"));
       }, PREVIEW_REQUEST_TIMEOUT_MS);
 
       try {
-        if (isInitialLoad) {
-          setPreviewLoading(true);
+        if (isInitialLoad && previewItemsRef.current.length === 0) {
+          const cachedPreviewItems = readCachedHomePreviewItems();
+          if (cachedPreviewItems && cachedPreviewItems.length > 0) {
+            setPreviewItems(cachedPreviewItems);
+            setIsFallbackPreview(false);
+            setPreviewLoading(false);
+          } else {
+            setPreviewLoading(true);
+          }
           setPreviewError(null);
         }
 
@@ -885,8 +1127,10 @@ export default function Home() {
         if (!isMounted) return;
 
         if (nextItems.length === 0) {
-          setPreviewItems(fallbackPreviewItems);
-          setIsFallbackPreview(true);
+          if (previewItemsRef.current.length === 0) {
+            setPreviewItems(fallbackPreviewItems);
+            setIsFallbackPreview(true);
+          }
           setPreviewError(null);
           return;
         }
@@ -894,27 +1138,38 @@ export default function Home() {
         setPreviewItems(nextItems);
         setIsFallbackPreview(false);
         setPreviewError(null);
+        writeCachedHomePreviewItems(nextItems);
       } catch (error) {
         logHomeDataError(error);
         if (!isMounted) return;
 
-        setPreviewItems(fallbackPreviewItems);
-        setIsFallbackPreview(true);
+        if (previewItemsRef.current.length === 0) {
+          const cachedPreviewItems = readCachedHomePreviewItems();
+          if (cachedPreviewItems && cachedPreviewItems.length > 0) {
+            setPreviewItems(cachedPreviewItems);
+            setIsFallbackPreview(false);
+          } else {
+            setPreviewItems(fallbackPreviewItems);
+            setIsFallbackPreview(true);
+          }
+        }
         setPreviewError(null);
       } finally {
         window.clearTimeout(timeout);
+        isRequestInFlight = false;
         if (!isMounted) return;
         hasLoadedPreviewRef.current = true;
         setPreviewLoading(false);
+        scheduleNextRefresh();
       }
     }
 
-    loadPreview();
-
-    const refresh = window.setInterval(loadPreview, 60_000);
+    void loadPreview(!hasLoadedPreviewRef.current);
     return () => {
       isMounted = false;
-      window.clearInterval(refresh);
+      if (refreshTimer !== null) {
+        window.clearTimeout(refreshTimer);
+      }
     };
   }, [isMobileHome]);
 
@@ -1104,11 +1359,12 @@ export default function Home() {
 
   useEffect(() => {
     if (!activeForecastTarget) {
-      setLocationContext(null);
       setLocationContextLoading(false);
-      setLocationContextError(null);
-      setLocationContextNotice(null);
-      setLocationContextErrorTone("neutral");
+      if (!locationContextStateRef.current) {
+        setLocationContextError(null);
+        setLocationContextNotice(null);
+        setLocationContextErrorTone("neutral");
+      }
       return;
     }
 
@@ -1123,6 +1379,38 @@ export default function Home() {
     let refreshTimer: number | null = null;
     let isRequestInFlight = false;
 
+    const persistLocationContextCache = () => {
+      const entries = Array.from(locationContextCacheRef.current.entries())
+        .map(([key, value]) => ({
+          key,
+          savedAt: value.savedAt,
+          context: value.context,
+        }))
+        .sort((a, b) => b.savedAt - a.savedAt)
+        .slice(0, LOCATION_CONTEXT_CACHE_MAX_ENTRIES);
+
+      locationContextCacheRef.current = new Map(
+        entries.map((entry) => [
+          entry.key,
+          { context: entry.context, savedAt: entry.savedAt },
+        ])
+      );
+      writeCachedLocationContextEntries(entries);
+    };
+
+    const readCachedContextForTarget = () =>
+      locationContextCacheRef.current.get(targetKey)?.context ?? null;
+    const readBestCachedContext = () =>
+      readCachedContextForTarget() ??
+      getMostRecentLocationContextFromCache(locationContextCacheRef.current);
+    const cacheFreshLocationContext = (context: WeatherLocationContext) => {
+      locationContextCacheRef.current.set(targetKey, {
+        context,
+        savedAt: Date.now(),
+      });
+      persistLocationContextCache();
+    };
+
     const scheduleNextRefresh = (delayMs: number) => {
       if (!isMounted) return;
       if (refreshTimer !== null) {
@@ -1133,23 +1421,35 @@ export default function Home() {
       }, delayMs);
     };
 
-    const cachedContext = locationContextCacheRef.current.get(targetKey);
-    if (cachedContext) {
-      setLocationContext(cachedContext);
+    const cachedContextForTarget = readCachedContextForTarget();
+    if (cachedContextForTarget) {
+      setLocationContext(cachedContextForTarget);
       setLocationContextError(null);
       setLocationContextNotice(null);
       setLocationContextErrorTone("neutral");
     } else {
-      setLocationContext(null);
-      setLocationContextError(null);
-      setLocationContextNotice(null);
-      setLocationContextErrorTone("neutral");
+      const fallbackCachedContext = getMostRecentLocationContextFromCache(
+        locationContextCacheRef.current
+      );
+      if (fallbackCachedContext) {
+        setLocationContext((current) => current ?? fallbackCachedContext);
+        setLocationContextError(null);
+        setLocationContextNotice(
+          "Showing the latest available forecast while refresh catches up."
+        );
+        setLocationContextErrorTone("neutral");
+      } else {
+        setLocationContext(null);
+        setLocationContextError(null);
+        setLocationContextNotice(null);
+        setLocationContextErrorTone("neutral");
+      }
     }
 
     async function loadLocationContext() {
       if (!isMounted || isRequestInFlight) return;
       isRequestInFlight = true;
-      const hasCachedContext = Boolean(locationContextCacheRef.current.get(targetKey));
+      const hasCachedContext = Boolean(readBestCachedContext());
 
       try {
         if (!hasCachedContext) {
@@ -1165,7 +1465,7 @@ export default function Home() {
         });
         if (!isMounted) return;
         if (nextContext.status === "ok") {
-          locationContextCacheRef.current.set(targetKey, nextContext);
+          cacheFreshLocationContext(nextContext);
           setLocationContext(nextContext);
           setLocationContextError(null);
           setLocationContextNotice(null);
@@ -1174,7 +1474,7 @@ export default function Home() {
           return;
         }
 
-        const cached = locationContextCacheRef.current.get(targetKey);
+        const cached = readBestCachedContext();
         if (cached) {
           setLocationContext(cached);
           setLocationContextError(null);
@@ -1194,7 +1494,7 @@ export default function Home() {
       } catch (error) {
         logHomeDataError(error);
         if (!isMounted) return;
-        const cached = locationContextCacheRef.current.get(targetKey);
+        const cached = readBestCachedContext();
         if (cached) {
           setLocationContext(cached);
           setLocationContextError(null);
@@ -1209,6 +1509,12 @@ export default function Home() {
                 error.retryAfterSeconds * 1000
               )
             );
+          } else if (isAbortError(error)) {
+            setLocationContextNotice(
+              "Showing the latest available forecast while refresh is taking longer than expected."
+            );
+            setLocationContextErrorTone("neutral");
+            scheduleNextRefresh(LOCATION_CONTEXT_SUCCESS_REFRESH_INTERVAL_MS);
           } else {
             setLocationContextNotice(
               "Showing the latest available forecast while refresh catches up."
@@ -1310,7 +1616,10 @@ export default function Home() {
     ? null
     : locationContextError;
   const mobileLocationDisplayLabel =
-    mobileLocationTarget?.label || manualArea?.label || "Choose an area";
+    mobileLocationTarget?.label ||
+    manualArea?.label ||
+    locationContext?.location.label ||
+    "Choose an area";
   const selectedManualAreaLabel = manualArea?.label ?? "";
   const desktopForecastTitle =
     desktopForecastTarget?.label || locationContext?.location.label || "Current location";
@@ -1327,11 +1636,21 @@ export default function Home() {
   const mobileTabTrackTransition = mobileTabIsDragging || prefersReducedMotion
     ? "none"
     : "transform 320ms cubic-bezier(0.22, 1, 0.36, 1)";
+  const mobileSummaryLoading = locationContextLoading && !locationContext;
+  const showMobileTargetPendingMessage =
+    !locationContext &&
+    !blockingLocationContextError &&
+    ((!mobileLocationTarget && isMobileHome) ||
+      (locationMode === "gps" && locationState === "locating"));
   const mobileForecastPanel = locationContextLoading && !locationContext ? (
     <div className="space-y-3 rounded-[1.7rem] border border-[var(--ws-border-subtle)] bg-white/86 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
       <div className="ws-skeleton h-5 w-28 rounded-full" />
       <div className="ws-skeleton h-4 w-44 rounded-full" />
       <div className="ws-skeleton h-52 rounded-[1.3rem]" />
+    </div>
+  ) : showMobileTargetPendingMessage ? (
+    <div className="rounded-[1.7rem] border border-slate-200/80 bg-white/82 px-4 py-4 text-sm text-slate-600 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
+      We&apos;re preparing your nearby forecast view.
     </div>
   ) : blockingLocationContextError ? (
     <div
@@ -1419,10 +1738,7 @@ export default function Home() {
               feelsLikeLabel={formatTemperature(
                 currentLocationSummary?.apparent_temperature
               )}
-              isLoading={
-                (locationContextLoading && !locationContext) ||
-                (!locationContext && Boolean(blockingLocationContextError))
-              }
+              isLoading={mobileSummaryLoading && !blockingLocationContextError}
               locationMessage={locationMessage}
               locationMode={locationMode}
               locationOptions={locationOptions}

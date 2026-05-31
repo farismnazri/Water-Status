@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bar,
   CartesianGrid,
@@ -109,6 +109,7 @@ export function ForecastTimelineCard({
   variant = "mobile",
 }: ForecastTimelineCardProps) {
   const isCompact = variant === "mobile";
+  const chartViewportRef = useRef<HTMLDivElement | null>(null);
   const chartData = useMemo(
     () =>
       data.map((point) => ({
@@ -121,6 +122,7 @@ export function ForecastTimelineCard({
     [data]
   );
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [hasChartViewport, setHasChartViewport] = useState(false);
 
   const chartTickIndexes = useMemo(() => {
     if (chartData.length === 0) return new Set<number>();
@@ -184,6 +186,29 @@ export function ForecastTimelineCard({
       return defaultActiveIndex;
     });
   }, [chartData.length, defaultActiveIndex]);
+
+  useEffect(() => {
+    const node = chartViewportRef.current;
+    if (!node) return;
+
+    const updateViewportState = () => {
+      const { width, height } = node.getBoundingClientRect();
+      setHasChartViewport(width > 0 && height > 0);
+    };
+
+    updateViewportState();
+
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      updateViewportState();
+    });
+    observer.observe(node);
+
+    return () => observer.disconnect();
+  }, [isCompact]);
 
   const rainDomainMax = useMemo(() => {
     const maxValue = chartData.reduce((highest, point) => {
@@ -309,142 +334,146 @@ export function ForecastTimelineCard({
           {readout}
         </div>
 
-        <div className={isCompact ? "h-48" : "h-40"}>
-          <ResponsiveContainer width="100%" height="100%">
-            <ComposedChart
-              data={chartData}
-              margin={{
-                top: isCompact ? 6 : 8,
-                right: metric === "rain" ? 10 : 4,
-                left: metric === "temperature" ? (isCompact ? 18 : 20) : isCompact ? 6 : 10,
-                bottom: isCompact ? 10 : 14,
-              }}
-              onMouseMove={updateActiveIndex}
-              onMouseLeave={() => setActiveIndex(defaultActiveIndex)}
-              onTouchStart={updateActiveIndex}
-              onTouchMove={updateActiveIndex}
-              onClick={updateActiveIndex}
-            >
-              <CartesianGrid
-                stroke="rgba(148,163,184,0.16)"
-                vertical={false}
-              />
-              <XAxis
-                dataKey="display_label"
-                axisLine={
-                  metric === "temperature"
-                    ? { stroke: "rgba(148,163,184,0.32)" }
-                    : false
-                }
-                tickLine={false}
-                interval={0}
-                height={isCompact ? 30 : 34}
-                padding={{ left: 8, right: 8 }}
-                tick={{ fill: "#64748b", fontSize: 11 }}
-                tickMargin={isCompact ? 8 : 10}
-                tickFormatter={(value, index) =>
-                  chartTickIndexes.has(index) ? value : ""
-                }
-              />
-              <Tooltip
-                cursor={{ stroke: "rgba(14,165,233,0.24)", strokeWidth: 1 }}
-                content={() => null}
-              />
-              {metric === "rain" ? (
-                <>
-                  <YAxis
-                    yAxisId="rain"
-                    width={42}
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: "#64748b", fontSize: 11 }}
-                    tickMargin={6}
-                    allowDecimals
-                    domain={[0, rainDomainMax]}
-                    ticks={rainTicks}
-                    tickFormatter={(value) => formatRainTick(value)}
-                  />
-                  <YAxis
-                    yAxisId="probability"
-                    orientation="right"
-                    width={42}
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{ fill: "#64748b", fontSize: 11 }}
-                    tickMargin={6}
-                    domain={[0, 100]}
-                    tickFormatter={(value) => `${Math.round(value)}%`}
-                  />
-                </>
-              ) : (
-                <YAxis
-                  yAxisId="temperature"
-                  width={54}
-                  axisLine={{ stroke: "rgba(148,163,184,0.32)" }}
-                  tickLine={{ stroke: "rgba(148,163,184,0.32)" }}
-                  tick={{ fill: "#64748b", fontSize: 11 }}
-                  tickMargin={6}
+        <div ref={chartViewportRef} className={isCompact ? "h-48" : "h-40"}>
+          {hasChartViewport ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <ComposedChart
+                data={chartData}
+                margin={{
+                  top: isCompact ? 6 : 8,
+                  right: metric === "rain" ? 10 : 4,
+                  left: metric === "temperature" ? (isCompact ? 18 : 20) : isCompact ? 6 : 10,
+                  bottom: isCompact ? 10 : 14,
+                }}
+                onMouseMove={updateActiveIndex}
+                onMouseLeave={() => setActiveIndex(defaultActiveIndex)}
+                onTouchStart={updateActiveIndex}
+                onTouchMove={updateActiveIndex}
+                onClick={updateActiveIndex}
+              >
+                <CartesianGrid
+                  stroke="rgba(148,163,184,0.16)"
+                  vertical={false}
+                />
+                <XAxis
+                  dataKey="display_label"
+                  axisLine={
+                    metric === "temperature"
+                      ? { stroke: "rgba(148,163,184,0.32)" }
+                      : false
+                  }
+                  tickLine={false}
                   interval={0}
-                  allowDecimals={false}
-                  domain={temperatureDomain}
-                  ticks={temperatureTicks}
-                  tickFormatter={(value) => `${Math.round(value)}°`}
+                  height={isCompact ? 30 : 34}
+                  padding={{ left: 8, right: 8 }}
+                  tick={{ fill: "#64748b", fontSize: 11 }}
+                  tickMargin={isCompact ? 8 : 10}
+                  tickFormatter={(value, index) =>
+                    chartTickIndexes.has(index) ? value : ""
+                  }
                 />
-              )}
-              <ReferenceLine
-                x="Now"
-                stroke="rgba(14,165,233,0.42)"
-                strokeDasharray="4 4"
-              />
-              {activePoint ? (
-                <ReferenceLine
-                  x={activePoint.display_label}
-                  stroke="rgba(15,23,42,0.18)"
-                  strokeDasharray="3 4"
+                <Tooltip
+                  cursor={{ stroke: "rgba(14,165,233,0.24)", strokeWidth: 1 }}
+                  content={() => null}
                 />
-              ) : null}
-
-              {metric === "rain" ? (
-                <>
-                  <Bar
-                    yAxisId="rain"
-                    dataKey="precip_value"
-                    name="Precip amount"
-                    fill="#38bdf8"
-                    radius={[8, 8, 0, 0]}
-                    minPointSize={6}
-                    barSize={isCompact ? 13 : 15}
-                    isAnimationActive={false}
+                {metric === "rain" ? (
+                  <>
+                    <YAxis
+                      yAxisId="rain"
+                      width={42}
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: "#64748b", fontSize: 11 }}
+                      tickMargin={6}
+                      allowDecimals
+                      domain={[0, rainDomainMax]}
+                      ticks={rainTicks}
+                      tickFormatter={(value) => formatRainTick(value)}
+                    />
+                    <YAxis
+                      yAxisId="probability"
+                      orientation="right"
+                      width={42}
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{ fill: "#64748b", fontSize: 11 }}
+                      tickMargin={6}
+                      domain={[0, 100]}
+                      tickFormatter={(value) => `${Math.round(value)}%`}
+                    />
+                  </>
+                ) : (
+                  <YAxis
+                    yAxisId="temperature"
+                    width={54}
+                    axisLine={{ stroke: "rgba(148,163,184,0.32)" }}
+                    tickLine={{ stroke: "rgba(148,163,184,0.32)" }}
+                    tick={{ fill: "#64748b", fontSize: 11 }}
+                    tickMargin={6}
+                    interval={0}
+                    allowDecimals={false}
+                    domain={temperatureDomain}
+                    ticks={temperatureTicks}
+                    tickFormatter={(value) => `${Math.round(value)}°`}
                   />
+                )}
+                <ReferenceLine
+                  x="Now"
+                  stroke="rgba(14,165,233,0.42)"
+                  strokeDasharray="4 4"
+                />
+                {activePoint ? (
+                  <ReferenceLine
+                    x={activePoint.display_label}
+                    stroke="rgba(15,23,42,0.18)"
+                    strokeDasharray="3 4"
+                  />
+                ) : null}
+
+                {metric === "rain" ? (
+                  <>
+                    <Bar
+                      yAxisId="rain"
+                      dataKey="precip_value"
+                      name="Precip amount"
+                      fill="#38bdf8"
+                      radius={[8, 8, 0, 0]}
+                      minPointSize={6}
+                      barSize={isCompact ? 13 : 15}
+                      isAnimationActive={false}
+                    />
+                    <Line
+                      yAxisId="probability"
+                      dataKey="precipitation_probability"
+                      name="Precip chance"
+                      type="monotone"
+                      stroke="#0f172a"
+                      strokeWidth={2}
+                      dot={{ r: 3.5, fill: "#0f172a" }}
+                      activeDot={{ r: 5, fill: "#0f172a" }}
+                      connectNulls
+                      isAnimationActive={false}
+                    />
+                  </>
+                ) : (
                   <Line
-                    yAxisId="probability"
-                    dataKey="precipitation_probability"
-                    name="Precip chance"
+                    yAxisId="temperature"
+                    dataKey="temperature_2m"
+                    name="Temperature"
                     type="monotone"
-                    stroke="#0f172a"
-                    strokeWidth={2}
-                    dot={{ r: 3.5, fill: "#0f172a" }}
-                    activeDot={{ r: 5, fill: "#0f172a" }}
+                    stroke="#f97316"
+                    strokeWidth={2.5}
+                    dot={{ r: 3.5, fill: "#f97316" }}
+                    activeDot={{ r: 5.5, fill: "#f97316" }}
                     connectNulls
                     isAnimationActive={false}
                   />
-                </>
-              ) : (
-                <Line
-                  yAxisId="temperature"
-                  dataKey="temperature_2m"
-                  name="Temperature"
-                  type="monotone"
-                  stroke="#f97316"
-                  strokeWidth={2.5}
-                  dot={{ r: 3.5, fill: "#f97316" }}
-                  activeDot={{ r: 5.5, fill: "#f97316" }}
-                  connectNulls
-                  isAnimationActive={false}
-                />
-              )}
-            </ComposedChart>
-          </ResponsiveContainer>
+                )}
+              </ComposedChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="ws-skeleton h-full rounded-[1.1rem]" />
+          )}
         </div>
       </div>
 

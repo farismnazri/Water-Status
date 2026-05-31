@@ -37,8 +37,16 @@ Your application will be available at `http://localhost:5173`.
 Set local API base URL:
 
 ```bash
-echo "VITE_API_BASE_URL=http://127.0.0.1:8000" > .env
+cp .env.example .env.local
 ```
+
+For local frontend against production API:
+
+```bash
+echo "VITE_API_BASE_URL=https://api.water-status.shop" > .env.local
+```
+
+Restart `npm run dev` after editing env files.
 
 ## Building for Production
 
@@ -57,6 +65,8 @@ Set frontend environment variable:
 Legacy alias:
 
 - `VITE_API_BASE=https://<your-backend-service>.onrender.com`
+
+Priority: `VITE_API_BASE_URL` is used first, `VITE_API_BASE` is only a fallback.
 
 If missing, the app falls back to same-origin in production and `http://127.0.0.1:8000` on localhost.
 
