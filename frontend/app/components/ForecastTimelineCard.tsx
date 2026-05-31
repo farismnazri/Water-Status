@@ -350,55 +350,47 @@ export function ForecastTimelineCard({
                 cursor={{ stroke: "rgba(14,165,233,0.24)", strokeWidth: 1 }}
                 content={() => null}
               />
-              <YAxis
-                yAxisId="rain"
-                width={42}
-                axisLine={false}
-                tickLine={false}
-                tick={metric === "rain" ? { fill: "#64748b", fontSize: 11 } : false}
-                tickMargin={6}
-                hide={metric !== "rain"}
-                allowDecimals
-                domain={[0, rainDomainMax]}
-                ticks={rainTicks}
-                tickFormatter={(value) => formatRainTick(value)}
-              />
-              <YAxis
-                yAxisId="probability"
-                orientation="right"
-                width={42}
-                axisLine={false}
-                tickLine={false}
-                tick={metric === "rain" ? { fill: "#64748b", fontSize: 11 } : false}
-                tickMargin={6}
-                hide={metric !== "rain"}
-                domain={[0, 100]}
-                tickFormatter={(value) => `${Math.round(value)}%`}
-              />
-              <YAxis
-                yAxisId="temperature"
-                width={54}
-                axisLine={
-                  metric === "temperature"
-                    ? { stroke: "rgba(148,163,184,0.32)" }
-                    : false
-                }
-                tickLine={
-                  metric === "temperature"
-                    ? { stroke: "rgba(148,163,184,0.32)" }
-                    : false
-                }
-                tick={
-                  metric === "temperature" ? { fill: "#64748b", fontSize: 11 } : false
-                }
-                tickMargin={6}
-                hide={metric !== "temperature"}
-                interval={0}
-                allowDecimals={false}
-                domain={temperatureDomain}
-                ticks={temperatureTicks}
-                tickFormatter={(value) => `${Math.round(value)}°`}
-              />
+              {metric === "rain" ? (
+                <>
+                  <YAxis
+                    yAxisId="rain"
+                    width={42}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: "#64748b", fontSize: 11 }}
+                    tickMargin={6}
+                    allowDecimals
+                    domain={[0, rainDomainMax]}
+                    ticks={rainTicks}
+                    tickFormatter={(value) => formatRainTick(value)}
+                  />
+                  <YAxis
+                    yAxisId="probability"
+                    orientation="right"
+                    width={42}
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{ fill: "#64748b", fontSize: 11 }}
+                    tickMargin={6}
+                    domain={[0, 100]}
+                    tickFormatter={(value) => `${Math.round(value)}%`}
+                  />
+                </>
+              ) : (
+                <YAxis
+                  yAxisId="temperature"
+                  width={54}
+                  axisLine={{ stroke: "rgba(148,163,184,0.32)" }}
+                  tickLine={{ stroke: "rgba(148,163,184,0.32)" }}
+                  tick={{ fill: "#64748b", fontSize: 11 }}
+                  tickMargin={6}
+                  interval={0}
+                  allowDecimals={false}
+                  domain={temperatureDomain}
+                  ticks={temperatureTicks}
+                  tickFormatter={(value) => `${Math.round(value)}°`}
+                />
+              )}
               <ReferenceLine
                 x="Now"
                 stroke="rgba(14,165,233,0.42)"
