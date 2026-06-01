@@ -475,7 +475,7 @@ function dedupeLocationOptions(
   const byLabel = new Map<string, SensorLocationOption>();
 
   items.forEach((item) => {
-    const label = String(item.location || "").trim();
+    const label = normalizeLocationLabel(item.location);
     const latitude = item.latitude;
     const longitude = item.longitude;
     if (!label) return;
@@ -494,6 +494,23 @@ function dedupeLocationOptions(
   });
 
   return Array.from(byLabel.values()).sort((a, b) => a.label.localeCompare(b.label));
+}
+
+function isPlaceholderLocationLabel(value: unknown): boolean {
+  return typeof value === "string" && value.trim().toLowerCase() === "string";
+}
+
+function toTitleCaseWords(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\b([a-z])/g, (match) => match.toUpperCase());
+}
+
+function normalizeLocationLabel(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const trimmed = value.trim();
+  if (!trimmed || isPlaceholderLocationLabel(trimmed)) return "";
+  return toTitleCaseWords(trimmed);
 }
 
 function haversineDistanceKm(
@@ -561,7 +578,9 @@ function readStoredManualArea(): SensorLocationOption | null {
       window.localStorage.getItem(LEGACY_MOBILE_HOME_MANUAL_AREA_STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
+    const normalizedLabel = normalizeLocationLabel(parsed?.label);
     if (
+      !normalizedLabel ||
       typeof parsed?.label !== "string" ||
       typeof parsed?.latitude !== "number" ||
       typeof parsed?.longitude !== "number"
@@ -570,8 +589,8 @@ function readStoredManualArea(): SensorLocationOption | null {
     }
 
     return {
-      id: parsed.id || parsed.label.toLowerCase(),
-      label: parsed.label,
+      id: parsed.id || normalizedLabel.toLowerCase(),
+      label: normalizedLabel,
       latitude: parsed.latitude,
       longitude: parsed.longitude,
     };
@@ -1631,19 +1650,17 @@ export default function Home() {
     ? null
     : locationContextError;
   const contextLocationLabel =
-    typeof locationContext?.location?.label === "string"
-      ? locationContext.location.label.trim()
-      : "";
+    normalizeLocationLabel(locationContext?.location?.label);
   const mobileLocationDisplayLabel =
     locationMode === "gps"
       ? contextLocationLabel ||
         mobileLocationTarget?.label ||
         manualArea?.label ||
-        "Choose an area"
+        "Select location"
       : mobileLocationTarget?.label ||
         manualArea?.label ||
         contextLocationLabel ||
-        "Choose an area";
+        "Select location";
   const selectedManualAreaLabel = manualArea?.label ?? "";
   const desktopForecastTitle =
     desktopForecastTarget?.mode === "gps"
