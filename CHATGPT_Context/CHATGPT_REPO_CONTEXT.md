@@ -151,6 +151,9 @@
 - Keep backend and frontend concerns separated by folder.
 - Prefer env-based configuration for API base and DB.
 - Keep Pi ops/systemd artifacts versioned under `backend/ops`.
+- WaterStatus prompts should be file/path-targeted first; avoid token-heavy tools unless explicitly requested or required.
+- Do not use screen capture/screenshots, browser/web access, UI inspection tools, computer-use/desktop automation, or broad auto-scripted repo scans by default.
+- For UI issues, ask Codex to inspect components/styles and use user-provided screenshot descriptions instead of opening screen tools unless truly required.
 - Fallback behavior is intentional in backend:
   - SQLite fallback when Postgres unavailable
   - Fallback sensors/readings when persistent DB path fails
@@ -166,6 +169,8 @@
 - API base URL wiring is centralized; frontend network issues often trace to `frontend/app/lib/api.ts` or env vars.
 - DB mode (Postgres vs SQLite fallback) materially changes behavior; prompts should state expected backend mode.
 - Pi ops files exist; for deployment prompts, clarify whether target is Render, Raspberry Pi, or both.
+- WaterStatus prompts should be file/path-targeted and command-minimal by default.
+- Do not ask Codex to use screen capture/screenshots, browser/web access, UI inspection tools, computer-use/desktop automation, or broad auto-scripts unless explicitly requested or not solvable from repo files/logs.
 
 ## Do Not Assume
 - Do not assume Stripe checkout is production-ready.

@@ -1723,13 +1723,6 @@ export default function Home() {
         />
       </Suspense>
 
-      <p className="px-1 text-[11px] text-slate-500">
-        Updated{" "}
-        {formatShortDate(
-          locationContext?.generated_at || currentLocationSummary?.time || null
-        )}{" "}
-        {locationContextNotice ? "(stale)" : ""}
-      </p>
     </div>
   );
   const mobileMapPanel = (

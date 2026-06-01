@@ -49,6 +49,23 @@ Allowed `Mode` values:
   - Major refactors
   - Risky or high-impact changes
 
+## Token-Heavy Tool Restrictions
+- Default to repo-file and log-driven workflows.
+- Avoid token-heavy tools unless the user explicitly requests them or they are genuinely required to solve the task.
+- Avoid by default:
+  - screen capture
+  - screenshots
+  - browser/web access
+  - UI inspection tools
+  - computer-use/desktop automation tools
+  - auto-scripted broad repo scans
+- Workflow default:
+  - inspect targeted files first
+  - use repo text search only when needed
+  - prefer exact file paths from user/context
+  - use minimal commands
+  - avoid broad recursive scans unless truly required
+
 ## Prompt Types
 
 ### 1. Starting Prompt
@@ -61,7 +78,7 @@ Rules:
 - Include what not to touch.
 - Include validation commands.
 - Include expected output summary.
-- Avoid asking Codex to browse web, use screen access, or inspect UI unless truly necessary.
+- Avoid token-heavy tools by default (screen capture/screenshots, browser/web, UI inspection, computer-use/desktop automation, broad auto-scripting) unless explicitly requested or required.
 
 Template:
 
@@ -82,6 +99,7 @@ Rules:
 - Do not modify unrelated files.
 - Do not change secrets or env values.
 - Keep existing style/patterns unless there is a clear reason to change.
+- Use targeted file/path inspection first; avoid token-heavy tools unless explicitly requested or required.
 - [project-specific rule]
 
 Acceptance criteria:
@@ -109,6 +127,7 @@ Rules:
 - Include files from prior result if relevant.
 - Include validation commands only if needed.
 - Ask for concise changed-file summary.
+- Keep tool use minimal; avoid screen capture/screenshots, browser/UI inspection, computer-use automation, and broad auto-scans unless explicitly requested or required.
 
 Template:
 
@@ -127,6 +146,7 @@ Touch only:
 Constraints:
 - Keep previous behavior intact except for the requested change.
 - Do not edit unrelated files.
+- Prefer exact file paths and minimal commands; avoid token-heavy tools unless explicitly requested or required.
 
 Validation (if needed):
 - [command]
@@ -146,6 +166,7 @@ Rules:
 - Avoid long explanations.
 - Avoid repeating repo context.
 - Include minimum validation only.
+- Avoid token-heavy tools by default (screenshots/screen capture, browser/UI inspection, computer-use automation, broad auto-scans) unless explicitly requested or required.
 
 Template:
 
@@ -161,6 +182,7 @@ File:
 Rules:
 - Only make this change.
 - Do not touch unrelated files.
+- Use targeted file edits and minimal commands; avoid token-heavy tools unless explicitly requested or required.
 
 Validation:
 - [single quick check]
@@ -209,6 +231,7 @@ Output:
 - Explicitly state what not to touch.
 - Keep follow-ups short and delta-focused.
 - For UI changes: describe visual goal + affected component, avoid browser/screenshot requirements unless necessary.
+- Default to file/path-targeted prompts and minimal commands; avoid broad recursive scans unless task-critical.
 - For bug prompts: include observed behavior, expected behavior, logs/errors, and likely files.
 - For deployment prompts: include exact commands and actual output when available.
 - For security/database prompts: default to `High` or `Very High` and require validation.

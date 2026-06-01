@@ -96,9 +96,6 @@ export function MobileDailySummaryCard({
       <div className="rounded-[1.7rem] border border-[var(--ws-border-subtle)] bg-white/86 p-3 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
-              Nearby Risk Snapshot
-            </p>
             <p className="mt-1 truncate text-[1.55rem] font-semibold tracking-tight text-slate-900 sm:text-[1.75rem]">
               {displayLocationLabel}
             </p>
