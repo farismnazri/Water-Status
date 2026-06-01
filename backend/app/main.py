@@ -22,6 +22,7 @@ import stripe
 
 from .db import (
     ACTIVE_BACKEND,
+    IS_PRODUCTION,
     db,
     fetch_postgres_latest_sensor_readings,
     ping_database,
@@ -55,6 +56,10 @@ WEATHER_RATE_LIMITS: dict[str, int] = {
 }
 _weather_rate_limit_lock: asyncio.Lock | None = None
 _weather_rate_limit_hits: dict[str, deque[float]] = {}
+_DEFAULT_DEV_ORIGINS = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+)
 
 
 def _get_home_preview_cache_lock() -> asyncio.Lock:
@@ -124,6 +129,51 @@ async def _enforce_weather_rate_limit(
 
 def _reset_weather_rate_limit_state() -> None:
     _weather_rate_limit_hits.clear()
+
+
+def _normalize_origin(raw: str) -> str:
+    return raw.strip().rstrip("/")
+
+
+def _parse_origin_list(raw: str | None) -> list[str]:
+    if not raw:
+        return []
+    return [
+        _normalize_origin(item)
+        for item in raw.split(",")
+        if _normalize_origin(item)
+    ]
+
+
+def _build_allowed_origins() -> list[str]:
+    origins = set(_DEFAULT_DEV_ORIGINS)
+    origins.update(_parse_origin_list(os.getenv("ALLOWED_ORIGINS")))
+
+    frontend_origin = _normalize_origin(os.getenv("FRONTEND_ORIGIN", ""))
+    if frontend_origin:
+        origins.add(frontend_origin)
+
+    if "*" in origins:
+        if IS_PRODUCTION:
+            raise RuntimeError("Wildcard CORS origins are not allowed in production.")
+        origins.remove("*")
+
+    if IS_PRODUCTION:
+        non_local = [
+            origin
+            for origin in origins
+            if origin not in _DEFAULT_DEV_ORIGINS
+        ]
+        if not non_local:
+            raise RuntimeError(
+                "Production mode requires at least one non-local CORS origin. "
+                "Set FRONTEND_ORIGIN or ALLOWED_ORIGINS."
+            )
+
+    return sorted(origins)
+
+
+ALLOWED_CORS_ORIGINS = _build_allowed_origins()
 
 # Fallback sample sensors (used when persistent DB is unavailable)
 FALLBACK_SENSORS = [
@@ -309,14 +359,9 @@ async def create_checkout_session(payload: CheckoutPayload):
     # Later you plug Stripe here. For now this must be valid JSON:
     return {"url": "https://example.com"}
 
-origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],        # only your frontend dev origins
+    allow_origins=ALLOWED_CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -342,10 +387,19 @@ async def readyz():
     try:
         await ping_database()
     except Exception as exc:
+        logger.exception("Readiness check failed")
+        if IS_PRODUCTION:
+            raise HTTPException(
+                status_code=503,
+                detail={"status": "not_ready"},
+            ) from exc
         raise HTTPException(
             status_code=503,
             detail={"status": "not_ready", "backend": ACTIVE_BACKEND, "reason": str(exc)},
-        )
+        ) from exc
+
+    if IS_PRODUCTION:
+        return {"status": "ready"}
     return {"status": "ready", "backend": ACTIVE_BACKEND}
 
 
@@ -423,6 +477,11 @@ async def _sensor_ingest_loop() -> None:
             logger.exception("Sensor ingest cycle failed")
 
         await asyncio.sleep(SENSOR_INGEST_INTERVAL_SECONDS)
+
+
+@app.on_event("startup")
+async def _startup_security_guardrails() -> None:
+    _validate_production_security_config()
 
 
 @app.on_event("startup")
@@ -504,10 +563,48 @@ PASSWORD_MAX_LENGTH = 128
 PASSWORD_HASH_SCHEME = "pbkdf2_sha256"
 PBKDF2_ITERATIONS = int(os.getenv("PASSWORD_HASH_ITERATIONS", "260000"))
 AUTH_TOKEN_TTL_SECONDS = int(os.getenv("AUTH_TOKEN_TTL_SECONDS", "28800"))
-AUTH_TOKEN_SECRET = os.getenv("AUTH_TOKEN_SECRET", "water-status-dev-secret")
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin").strip().lower()
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "adminwaterstatus")
+DEFAULT_AUTH_TOKEN_SECRET = "water-status-dev-secret"
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_PASSWORD = "adminwaterstatus"
+AUTH_TOKEN_SECRET = os.getenv("AUTH_TOKEN_SECRET", DEFAULT_AUTH_TOKEN_SECRET)
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", DEFAULT_ADMIN_USERNAME).strip().lower()
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", DEFAULT_ADMIN_PASSWORD)
 SENSITIVE_USER_FIELDS = {"password_hash", "password"}
+
+
+def _validate_production_security_config() -> None:
+    if not IS_PRODUCTION:
+        return
+
+    issues: list[str] = []
+
+    if (
+        not AUTH_TOKEN_SECRET
+        or AUTH_TOKEN_SECRET == DEFAULT_AUTH_TOKEN_SECRET
+        or len(AUTH_TOKEN_SECRET.strip()) < 32
+    ):
+        issues.append("AUTH_TOKEN_SECRET must be set to a strong non-default value")
+
+    if (
+        not ADMIN_USERNAME
+        or ADMIN_USERNAME == DEFAULT_ADMIN_USERNAME
+        or len(ADMIN_USERNAME) < 3
+    ):
+        issues.append("ADMIN_USERNAME must be set to a non-default value")
+
+    if (
+        not ADMIN_PASSWORD
+        or ADMIN_PASSWORD == DEFAULT_ADMIN_PASSWORD
+        or len(ADMIN_PASSWORD) < 12
+    ):
+        issues.append("ADMIN_PASSWORD must be set to a strong non-default value")
+
+    if issues:
+        logger.error("Unsafe production security configuration: %s", "; ".join(issues))
+        raise RuntimeError(
+            "Unsafe production security configuration. "
+            "Set required auth/admin environment variables."
+        )
 
 
 def _b64url_encode(raw: bytes) -> str:

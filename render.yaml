@@ -6,6 +6,14 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /healthz
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: FRONTEND_ORIGIN
+        fromService:
+          name: water-status
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
 
   - type: web
     name: water-status

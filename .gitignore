@@ -30,3 +30,4 @@ backend/.env
 # Notes / misc
 notes.txt
 dummy_data.rtf
+security_tightening.md

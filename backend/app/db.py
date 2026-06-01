@@ -1,7 +1,8 @@
 """Lightweight persistence layer.
 
 Uses Postgres via asyncpg when DATABASE_URL is configured.
-Falls back to SQLite when DATABASE_URL is missing.
+Falls back to SQLite when DATABASE_URL is missing in local/development modes.
+Production mode requires DATABASE_URL.
 """
 
 import asyncio
@@ -24,7 +25,23 @@ if TYPE_CHECKING:
 DOTENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=DOTENV_PATH)
 
+
+def _is_production_mode() -> bool:
+    mode = (
+        os.getenv("ENVIRONMENT")
+        or os.getenv("APP_ENV")
+        or os.getenv("RENDER_ENVIRONMENT")
+        or ""
+    ).strip().lower()
+    return mode in {"production", "prod"}
+
+
+IS_PRODUCTION = _is_production_mode()
 DATABASE_URL = os.getenv("DATABASE_URL")
+if IS_PRODUCTION and not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL must be configured in production mode."
+    )
 USE_POSTGRES = bool(DATABASE_URL)
 ACTIVE_BACKEND = "postgres" if USE_POSTGRES else "sqlite"
 SQLITE_PATH = os.getenv("SQLITE_PATH", os.path.join(os.path.dirname(__file__), "local_data.sqlite"))
