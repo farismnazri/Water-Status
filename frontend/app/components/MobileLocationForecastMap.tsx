@@ -89,7 +89,7 @@ export function MobileLocationForecastMap({
         ) : null}
       </div>
 
-      <div className="relative h-[18rem] overflow-hidden bg-white/45">
+      <div className="relative h-[15.5rem] overflow-hidden bg-white/45">
         {isClient && hasMap ? (
           <Suspense fallback={null}>
             <LazyMobileLocationForecastLeafletMap

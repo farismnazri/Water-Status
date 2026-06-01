@@ -1681,37 +1681,44 @@ export default function Home() {
     !blockingLocationContextError &&
     ((!mobileLocationTarget && isMobileHome) ||
       (locationMode === "gps" && locationState === "locating"));
+  const mobilePanelMinHeightClass = "min-h-[19.25rem]";
   const mobileForecastPanel = locationContextLoading && !locationContext ? (
-    <div className="space-y-3 rounded-[1.7rem] border border-[var(--ws-border-subtle)] bg-white/86 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
+    <div
+      className={`space-y-2 rounded-[1.6rem] border border-[var(--ws-border-subtle)] bg-white/86 p-3 shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${mobilePanelMinHeightClass}`}
+    >
       <div className="ws-skeleton h-5 w-28 rounded-full" />
       <div className="ws-skeleton h-4 w-44 rounded-full" />
-      <div className="ws-skeleton h-52 rounded-[1.3rem]" />
+      <div className="ws-skeleton h-40 rounded-[1.1rem]" />
     </div>
   ) : showMobileTargetPendingMessage ? (
-    <div className="rounded-[1.7rem] border border-slate-200/80 bg-white/82 px-4 py-4 text-sm text-slate-600 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
+    <div
+      className={`rounded-[1.6rem] border border-slate-200/80 bg-white/82 px-3 py-3 text-sm text-slate-600 shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${mobilePanelMinHeightClass}`}
+    >
       We&apos;re preparing your nearby forecast view.
     </div>
   ) : blockingLocationContextError ? (
     <div
-      className={`rounded-[1.7rem] border px-4 py-4 text-sm shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${locationContextErrorClasses}`}
+      className={`rounded-[1.6rem] border px-3 py-3 text-sm shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${mobilePanelMinHeightClass} ${locationContextErrorClasses}`}
     >
       {blockingLocationContextError}
     </div>
   ) : (
-    <div className="space-y-3">
+    <div className="space-y-2 h-full">
       {locationContextNotice ? (
         <div
-          className={`rounded-[1.25rem] border px-3.5 py-2.5 text-xs ${locationContextErrorClasses}`}
+          className={`rounded-[1.15rem] border px-3 py-2 text-xs ${locationContextErrorClasses}`}
         >
           {locationContextNotice}
         </div>
       ) : null}
       <Suspense
         fallback={
-          <div className="space-y-3 rounded-[1.7rem] border border-[var(--ws-border-subtle)] bg-white/86 p-4 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
+          <div
+            className={`space-y-2 rounded-[1.6rem] border border-[var(--ws-border-subtle)] bg-white/86 p-3 shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${mobilePanelMinHeightClass}`}
+          >
             <div className="ws-skeleton h-5 w-28 rounded-full" />
             <div className="ws-skeleton h-4 w-44 rounded-full" />
-            <div className="ws-skeleton h-52 rounded-[1.3rem]" />
+            <div className="ws-skeleton h-40 rounded-[1.1rem]" />
           </div>
         }
       >
@@ -1720,6 +1727,7 @@ export default function Home() {
           metric={mobileForecastMetric}
           onMetricChange={setMobileForecastMetric}
           variant="mobile"
+          className={`h-full ${mobilePanelMinHeightClass}`}
         />
       </Suspense>
 
@@ -1760,8 +1768,8 @@ export default function Home() {
   if (isMobileHome) {
     return (
       <main className="min-h-screen">
-        <section className="mx-auto max-w-5xl px-4 pb-6 pt-2">
-          <div className="space-y-3">
+        <section className="mx-auto max-w-5xl px-3.5 pb-3 pt-0">
+          <div className="space-y-2.5">
             <MobileDailySummaryCard
               CurrentLocationWeatherIcon={CurrentLocationWeatherIcon}
               displayLocationLabel={mobileLocationDisplayLabel}
@@ -1815,7 +1823,7 @@ export default function Home() {
             />
 
             <div
-              className="space-y-3"
+              className="space-y-2"
               style={{ touchAction: "pan-y" }}
             >
               <div
@@ -1856,7 +1864,7 @@ export default function Home() {
                   type="button"
                   onClick={() => commitMobileTab("forecast")}
                   className={[
-                    "py-2.5 text-center font-medium transition-colors",
+                    "py-2 text-center font-medium transition-colors",
                     mobileTab === "forecast"
                       ? "bg-sky-600 text-white shadow-inner"
                       : "text-slate-600 hover:bg-slate-100",
@@ -1868,7 +1876,7 @@ export default function Home() {
                   type="button"
                   onClick={() => commitMobileTab("map")}
                   className={[
-                    "py-2.5 text-center font-medium transition-colors",
+                    "py-2 text-center font-medium transition-colors",
                     mobileTab === "map"
                       ? "bg-sky-600 text-white shadow-inner"
                       : "text-slate-600 hover:bg-slate-100",

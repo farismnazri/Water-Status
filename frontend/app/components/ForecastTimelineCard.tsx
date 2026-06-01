@@ -29,6 +29,7 @@ type ForecastTimelineCardProps = {
   metric: "rain" | "temperature";
   onMetricChange: (metric: "rain" | "temperature") => void;
   variant?: "mobile" | "desktop";
+  className?: string;
 };
 
 function formatChartHourLabel(value: string | null | undefined): string {
@@ -64,6 +65,7 @@ export function ForecastTimelineCard({
   metric,
   onMetricChange,
   variant = "mobile",
+  className = "",
 }: ForecastTimelineCardProps) {
   const isCompact = variant === "mobile";
   const chartViewportRef = useRef<HTMLDivElement | null>(null);
@@ -263,16 +265,19 @@ export function ForecastTimelineCard({
   return (
     <div
       className={[
-        "rounded-[1.25rem] border border-[var(--ws-border-subtle)] bg-[linear-gradient(180deg,rgba(240,249,255,0.7),rgba(255,255,255,0.8))]",
-        isCompact ? "px-3 py-2.5" : "px-3.5 py-1",
+        isCompact
+          ? "rounded-[1.6rem] border border-[var(--ws-border-subtle)] bg-[linear-gradient(180deg,rgba(240,249,255,0.7),rgba(255,255,255,0.8))]"
+          : "rounded-[1.25rem] border border-[var(--ws-border-subtle)] bg-[linear-gradient(180deg,rgba(240,249,255,0.7),rgba(255,255,255,0.8))]",
+        isCompact ? "px-2.5 py-2" : "px-3.5 py-1",
+        className,
       ].join(" ")}
     >
-      <div className={`flex items-center justify-between ${isCompact ? "gap-2.5" : "gap-3"}`}>
+      <div className={`flex items-center justify-between ${isCompact ? "gap-2" : "gap-3"}`}>
         <div className="min-w-0">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
             {metric === "rain" ? "Precip 12h" : "Temperature (°C)"}
           </p>
-          <p className={`${isCompact ? "mt-0.5" : "mt-1"} text-[11px] text-slate-500`}>
+          <p className={`${isCompact ? "mt-0 leading-snug" : "mt-1"} text-[11px] text-slate-500`}>
             6h back and 6h ahead, in 1-hour steps.
           </p>
         </div>
@@ -282,7 +287,7 @@ export function ForecastTimelineCard({
             type="button"
             onClick={() => onMetricChange("rain")}
             className={[
-              "px-3 py-1.25 font-medium transition-colors",
+              `${isCompact ? "px-2.5 py-1" : "px-3 py-1.25"} font-medium transition-colors`,
               metric === "rain" ? "bg-sky-600 text-white" : "text-slate-600",
             ].join(" ")}
           >
@@ -292,7 +297,7 @@ export function ForecastTimelineCard({
             type="button"
             onClick={() => onMetricChange("temperature")}
             className={[
-              "px-3 py-1.25 font-medium transition-colors",
+              `${isCompact ? "px-2.5 py-1" : "px-3 py-1.25"} font-medium transition-colors`,
               metric === "temperature" ? "bg-sky-600 text-white" : "text-slate-600",
             ].join(" ")}
           >
@@ -301,11 +306,11 @@ export function ForecastTimelineCard({
         </div>
       </div>
 
-      <div className={isCompact ? "mt-2 space-y-2" : "mt-2.5 space-y-2.5"}>
+      <div className={isCompact ? "mt-1.5 space-y-1.5" : "mt-2.5 space-y-2.5"}>
         <div
           className={[
             "inline-flex items-center rounded-full border border-slate-200/80 bg-white/88 text-[11px] font-medium text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.06)] tabular-nums",
-            isCompact ? "min-h-7 px-2.5 py-1.25" : "min-h-8 px-3 py-1.5",
+            isCompact ? "min-h-6 px-2.5 py-1" : "min-h-8 px-3 py-1.5",
           ].join(" ")}
         >
           {readout}
@@ -313,7 +318,7 @@ export function ForecastTimelineCard({
 
         <div
           ref={chartViewportRef}
-          className={isCompact ? "h-48 min-h-[12rem]" : "h-40 min-h-[10rem]"}
+          className={isCompact ? "h-44 min-h-[11rem]" : "h-40 min-h-[10rem]"}
         >
           {hasChartViewport ? (
             <ComposedChart

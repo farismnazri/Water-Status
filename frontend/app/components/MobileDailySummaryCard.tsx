@@ -69,9 +69,12 @@ export function MobileDailySummaryCard({
   weatherLabel,
   windLabel,
 }: MobileDailySummaryCardProps) {
+  const infoLocationModeLabel =
+    locationMode === "gps" ? "Using current GPS location." : "Using selected area.";
+
   return (
-    <div className="space-y-3">
-      <div className="overflow-hidden px-1 pt-0.5 text-center">
+    <div className="space-y-2.5">
+      <div className="overflow-hidden px-1 text-center">
         <ShinyText
           text="Stop guessing. Start seeing."
           speed={3}
@@ -83,56 +86,58 @@ export function MobileDailySummaryCard({
           yoyo={false}
           pauseOnHover={false}
           disabled={shouldToneDownMotion}
-          className="mx-auto block max-w-full overflow-visible whitespace-nowrap pb-[0.04em] text-center text-[clamp(1.28rem,5.6vw,2.35rem)] font-semibold leading-none tracking-[-0.08em]"
+          className="mx-auto block max-w-full overflow-visible whitespace-nowrap pb-[0.04em] text-center text-[clamp(1.18rem,5.15vw,2.35rem)] font-semibold leading-none tracking-[-0.06em]"
         />
       </div>
 
       {locationMessage ? (
-        <div className="rounded-2xl border border-slate-200/80 bg-white/80 px-4 py-3 text-xs text-slate-600">
+        <div className="rounded-2xl border border-slate-200/80 bg-white/80 px-3 py-2 text-xs text-slate-600">
           {locationMessage}
         </div>
       ) : null}
 
-      <div className="rounded-[1.7rem] border border-[var(--ws-border-subtle)] bg-white/86 p-3 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
-        <div className="flex items-start justify-between gap-3">
+      <div className="rounded-[1.55rem] border border-[var(--ws-border-subtle)] bg-white/86 p-2.5 shadow-[0_18px_40px_rgba(15,23,42,0.08)]">
+        <div className="flex items-start justify-between gap-2.5">
           <div className="min-w-0">
-            <p className="mt-1 truncate text-[1.55rem] font-semibold tracking-tight text-slate-900 sm:text-[1.75rem]">
+            <p className="truncate text-[1.32rem] font-semibold tracking-tight text-slate-900 sm:text-[1.75rem]">
               {displayLocationLabel}
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
-            {locationMode === "gps" && gpsAccuracyText ? (
-              <details className="relative">
-                <summary className="inline-flex h-6 w-6 cursor-pointer list-none items-center justify-center rounded-full border border-slate-300 bg-slate-100 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300">
-                  <Info className="h-3.5 w-3.5" />
-                </summary>
-                <div className="absolute right-0 z-20 mt-2 w-52 rounded-xl border border-slate-200/90 bg-white px-3 py-2 text-[11px] text-slate-600 shadow-[0_12px_24px_rgba(15,23,42,0.12)]">
-                  <p>Detected area: {detectedAreaLabel}</p>
-                  <p>{gpsAccuracyText}</p>
-                  {gpsCoordinatesText ? <p>{gpsCoordinatesText}</p> : null}
-                  {showPoorGpsAccuracyWarning ? (
-                    <p>Location may be approximate.</p>
-                  ) : null}
-                </div>
-              </details>
-            ) : null}
+          <div className="flex shrink-0 items-center gap-1.5">
+            <details className="relative">
+              <summary
+                className="inline-flex h-8 w-8 cursor-pointer list-none items-center justify-center rounded-full border border-slate-300 bg-slate-100 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
+                aria-label="Show location details"
+              >
+                <Info className="h-4 w-4" />
+              </summary>
+              <div className="absolute right-0 z-20 mt-2 w-52 rounded-xl border border-slate-200/90 bg-white px-3 py-2 text-[11px] text-slate-600 shadow-[0_12px_24px_rgba(15,23,42,0.12)]">
+                <p>Detected area: {detectedAreaLabel}</p>
+                <p>{infoLocationModeLabel}</p>
+                {gpsAccuracyText ? <p>{gpsAccuracyText}</p> : null}
+                {gpsCoordinatesText ? <p>{gpsCoordinatesText}</p> : null}
+                {showPoorGpsAccuracyWarning ? (
+                  <p>Location may be approximate.</p>
+                ) : null}
+              </div>
+            </details>
             <button
               type="button"
               onClick={onTogglePicker}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--ws-border-subtle)] bg-white/86 text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.05)] transition-colors hover:bg-sky-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[var(--ws-border-subtle)] bg-white/86 text-slate-700 shadow-[0_8px_20px_rgba(15,23,42,0.05)] transition-colors hover:bg-sky-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300"
               aria-label="Change location source"
             >
               <LocateFixed className="h-4 w-4" />
             </button>
-            <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600">
+            <span className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-sky-50 text-sky-600">
               <CurrentLocationWeatherIcon className="h-5 w-5" />
             </span>
           </div>
         </div>
 
         {pickerOpen ? (
-          <div className="mt-3 rounded-[1.2rem] border border-[var(--ws-border-subtle)] bg-white/82 p-3 shadow-[0_14px_28px_rgba(15,23,42,0.05)]">
+          <div className="mt-2.5 rounded-[1.2rem] border border-[var(--ws-border-subtle)] bg-white/82 p-2.5 shadow-[0_14px_28px_rgba(15,23,42,0.05)]">
             <div className="grid grid-cols-2 overflow-hidden rounded-2xl border border-[var(--ws-border-subtle)] bg-[var(--ws-bg-elevated)] text-xs">
               <button
                 type="button"
@@ -194,58 +199,58 @@ export function MobileDailySummaryCard({
         ) : null}
 
         {isLoading ? (
-          <div className="mt-4 space-y-3">
-            <div className="ws-skeleton h-10 w-32 rounded-2xl" />
+          <div className="mt-3 space-y-2">
+            <div className="ws-skeleton h-8 w-28 rounded-2xl" />
             <div className="grid grid-cols-2 gap-2">
-              <div className="ws-skeleton h-16 rounded-2xl" />
-              <div className="ws-skeleton h-16 rounded-2xl" />
-              <div className="ws-skeleton col-span-2 h-16 rounded-2xl" />
+              <div className="ws-skeleton h-12 rounded-2xl" />
+              <div className="ws-skeleton h-12 rounded-2xl" />
+              <div className="ws-skeleton col-span-2 h-12 rounded-2xl" />
             </div>
           </div>
         ) : error ? (
-          <div className={`mt-4 rounded-2xl border px-4 py-3 text-sm ${errorClasses}`}>
+          <div className={`mt-3 rounded-2xl border px-3 py-2 text-sm ${errorClasses}`}>
             {error}
           </div>
         ) : (
           <>
-            <div className="mt-3 flex items-end justify-between gap-3">
+            <div className="mt-2.5 flex items-end justify-between gap-2.5">
               <div>
-                <p className="text-[2.35rem] font-semibold leading-none tracking-tight text-slate-950">
+                <p className="text-[2rem] font-semibold leading-none tracking-tight text-slate-950">
                   {temperatureLabel}
                 </p>
-                <p className="mt-1 text-sm text-slate-500">
+                <p className="mt-0.5 text-[13px] text-slate-500">
                   Feels like {feelsLikeLabel}
                 </p>
               </div>
 
               <div className="text-right">
-                <p className="text-[15px] font-medium text-slate-700">
+                <p className="text-sm font-medium text-slate-700">
                   {weatherLabel}
                 </p>
-                <p className="mt-1 text-[15px] text-slate-500">
+                <p className="mt-0.5 text-sm text-slate-500">
                   Wind {windLabel}
                 </p>
               </div>
             </div>
 
-            <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-              <div className="rounded-[1.2rem] border border-slate-200/80 bg-slate-50/80 px-3.5 py-3">
+            <div className="mt-2.5 grid grid-cols-2 gap-1.5 text-xs">
+              <div className="rounded-[1.05rem] border border-slate-200/80 bg-slate-50/80 px-3 py-2">
                 <p className="text-slate-500">Next 6h precip</p>
-                <p className="mt-1 text-lg font-semibold text-slate-900">
+                <p className="mt-0.5 text-base font-semibold text-slate-900">
                   {next6hPrecipLabel}
                 </p>
               </div>
 
-              <div className="rounded-[1.2rem] border border-slate-200/80 bg-slate-50/80 px-3.5 py-3">
+              <div className="rounded-[1.05rem] border border-slate-200/80 bg-slate-50/80 px-3 py-2">
                 <p className="text-slate-500">Today high / low</p>
-                <p className="mt-1 text-[15px] font-semibold text-slate-900">
+                <p className="mt-0.5 text-[14px] font-semibold text-slate-900">
                   {todayHighLowLabel}
                 </p>
               </div>
 
-              <div className="col-span-2 rounded-[1.2rem] border border-slate-200/80 bg-slate-50/80 px-3.5 py-3">
+              <div className="col-span-2 rounded-[1.05rem] border border-slate-200/80 bg-slate-50/80 px-3 py-2">
                 <p className="text-slate-500">Next 6h precip sum</p>
-                <p className="mt-1 text-[15px] font-semibold text-slate-900">
+                <p className="mt-0.5 text-[14px] font-semibold text-slate-900">
                   {next6hPrecipSumLabel}
                 </p>
               </div>
