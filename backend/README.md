@@ -106,3 +106,54 @@ The tracked unit now uses `/usr/bin/env cloudflared` with an explicit `PATH`, bu
 sudo systemctl daemon-reload
 sudo systemctl restart waterstatus-quick-tunnel
 ```
+
+## Render Free keep-awake (Raspberry Pi cron)
+
+This is an external workaround that runs on the Raspberry Pi user account, not inside Render.
+It periodically pings the deployed Render backend health endpoint to reduce cold-start delays.
+
+Current backend URL:
+
+```bash
+https://water-status-backend.onrender.com
+```
+
+### Cron entry (user `faiz`)
+
+```cron
+*/10 * * * * /usr/bin/curl -fsS --max-time 20 https://water-status-backend.onrender.com/healthz >/dev/null 2>&1
+```
+
+### Manual health test
+
+```bash
+curl -i https://water-status-backend.onrender.com/healthz
+```
+
+Expected: HTTP `200`.
+
+### Verify cron is active
+
+```bash
+crontab -l
+sudo systemctl status cron --no-pager
+journalctl -u cron --since "30 minutes ago" --no-pager | grep faiz
+```
+
+### Remove the keep-awake job safely
+
+```bash
+crontab -e
+```
+
+Delete only the keep-awake cron line, save, then re-check with:
+
+```bash
+crontab -l
+```
+
+### Important limitation
+
+This keep-awake method is suitable for hobby/public-demo use only on Render Free services.
+It can reduce cold starts, but it may consume most of Render Free monthly instance hours (`750` hours/month) if the backend stays active continuously.
+The production-grade always-on solution is to upgrade the Render backend service to a paid instance.

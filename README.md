@@ -19,6 +19,10 @@ cd backend
 ./venv/bin/python migrate_sensor_coords.py
 ```
 
+## Raspberry Pi Ops Notes
+
+Detailed Raspberry Pi operational instructions, including the Render Free keep-awake cron workaround, are documented in [backend/README.md](/Users/FarisNazri/Documents/WaterStatus/backend/README.md).
+
 ## Production Security Requirements
 
 Set production mode explicitly:
