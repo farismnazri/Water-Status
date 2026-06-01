@@ -81,7 +81,7 @@ export const links: Route.LinksFunction = () => [
     rel: "stylesheet",
     href: "https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&display=swap",
   },
-  { rel: "manifest", href: "/site.webmanifest?v=2" },
+  { rel: "manifest", href: "/site.webmanifest?v=3" },
   {
     rel: "apple-touch-icon",
     href: "/icons/apple-touch-icon-180.png",
@@ -305,7 +305,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
               {/* Left: logo */}
               <Link to="/" className="flex min-w-0 items-center gap-2.5">
                 <img
-                  src="/WaterStatus_Icon.svg"
+                  src="/WaterStatus_Icon-2.png"
                   alt=""
                   width={44}
                   height={44}

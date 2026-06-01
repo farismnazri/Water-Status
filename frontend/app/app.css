@@ -58,7 +58,7 @@
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
   --ws-mobile-nav-height: 3.95rem;
-  --ws-mobile-header-height: 4.45rem;
+  --ws-mobile-header-height: 4rem;
 }
 
 html,
@@ -142,8 +142,8 @@ textarea,
 
 .ws-mobile-header-inner {
   min-height: var(--ws-mobile-header-height);
-  padding-top: max(0.55rem, env(safe-area-inset-top));
-  padding-bottom: 0.7rem;
+  padding-top: max(0.5rem, env(safe-area-inset-top));
+  padding-bottom: 0.63rem;
 }
 
 .ws-safe-bottom {
