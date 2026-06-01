@@ -1,5 +1,5 @@
 import type { LucideIcon } from "lucide-react";
-import { LocateFixed } from "lucide-react";
+import { Info, LocateFixed } from "lucide-react";
 
 import ShinyText from "./ShinyText";
 
@@ -13,9 +13,12 @@ type SensorLocationOption = {
 type MobileDailySummaryCardProps = {
   CurrentLocationWeatherIcon: LucideIcon;
   displayLocationLabel: string;
+  detectedAreaLabel: string;
   error: string | null;
   errorClasses: string;
   feelsLikeLabel: string;
+  gpsAccuracyText: string | null;
+  gpsCoordinatesText: string | null;
   isLoading: boolean;
   locationMessage: string | null;
   locationMode: "gps" | "manual";
@@ -30,6 +33,7 @@ type MobileDailySummaryCardProps = {
   pickerOpen: boolean;
   selectedLocationLabel: string;
   shouldToneDownMotion: boolean;
+  showPoorGpsAccuracyWarning: boolean;
   temperatureLabel: string;
   todayHighLowLabel: string;
   weatherLabel: string;
@@ -39,9 +43,12 @@ type MobileDailySummaryCardProps = {
 export function MobileDailySummaryCard({
   CurrentLocationWeatherIcon,
   displayLocationLabel,
+  detectedAreaLabel,
   error,
   errorClasses,
   feelsLikeLabel,
+  gpsAccuracyText,
+  gpsCoordinatesText,
   isLoading,
   locationMessage,
   locationMode,
@@ -56,6 +63,7 @@ export function MobileDailySummaryCard({
   pickerOpen,
   selectedLocationLabel,
   shouldToneDownMotion,
+  showPoorGpsAccuracyWarning,
   temperatureLabel,
   todayHighLowLabel,
   weatherLabel,
@@ -97,6 +105,21 @@ export function MobileDailySummaryCard({
           </div>
 
           <div className="flex items-center gap-2">
+            {locationMode === "gps" && gpsAccuracyText ? (
+              <details className="relative">
+                <summary className="inline-flex h-6 w-6 cursor-pointer list-none items-center justify-center rounded-full border border-slate-300 bg-slate-100 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300">
+                  <Info className="h-3.5 w-3.5" />
+                </summary>
+                <div className="absolute right-0 z-20 mt-2 w-52 rounded-xl border border-slate-200/90 bg-white px-3 py-2 text-[11px] text-slate-600 shadow-[0_12px_24px_rgba(15,23,42,0.12)]">
+                  <p>Detected area: {detectedAreaLabel}</p>
+                  <p>{gpsAccuracyText}</p>
+                  {gpsCoordinatesText ? <p>{gpsCoordinatesText}</p> : null}
+                  {showPoorGpsAccuracyWarning ? (
+                    <p>Location may be approximate.</p>
+                  ) : null}
+                </div>
+              </details>
+            ) : null}
             <button
               type="button"
               onClick={onTogglePicker}

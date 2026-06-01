@@ -14,6 +14,7 @@ import {
   CloudRain,
   ThermometerSun,
   ArrowRight,
+  Info,
   LocateFixed,
 } from "lucide-react";
 import { API_BASE } from "../lib/api";
@@ -127,6 +128,8 @@ const HOME_PREVIEW_CACHE_MAX_AGE_MS = 20 * 60_000;
 const LOCATION_CONTEXT_CACHE_STORAGE_KEY = "wsHomeLocationContextCacheV1";
 const LOCATION_CONTEXT_CACHE_MAX_AGE_MS = 45 * 60_000;
 const LOCATION_CONTEXT_CACHE_MAX_ENTRIES = 8;
+const GEOLOCATION_TIMEOUT_MS = 10_000;
+const POOR_GPS_ACCURACY_THRESHOLD_METERS = 1000;
 
 type LocationContextCacheValue = {
   context: WeatherLocationContext;
@@ -657,6 +660,9 @@ export default function Home() {
     latitude: number;
     longitude: number;
   } | null>(null);
+  const [desktopGpsAccuracyMeters, setDesktopGpsAccuracyMeters] = useState<number | null>(
+    null
+  );
   const [desktopLocationState, setDesktopLocationState] = useState<
     "idle" | "locating" | "ready" | "unavailable"
   >("idle");
@@ -681,6 +687,7 @@ export default function Home() {
     latitude: number;
     longitude: number;
   } | null>(null);
+  const [gpsAccuracyMeters, setGpsAccuracyMeters] = useState<number | null>(null);
   const [locationState, setLocationState] = useState<
     "idle" | "locating" | "ready" | "needs_manual"
   >(
@@ -748,6 +755,9 @@ export default function Home() {
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
         });
+        setGpsAccuracyMeters(
+          Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null
+        );
         setLocationMode("gps");
         setLocationState("ready");
         setManualAreaPickerOpen(false);
@@ -755,6 +765,7 @@ export default function Home() {
       },
       (error) => {
         logHomeDataError(error);
+        setGpsAccuracyMeters(null);
         setLocationMode("manual");
         setLocationState(manualArea ? "ready" : "needs_manual");
         setManualAreaPickerOpen(!manualArea);
@@ -770,8 +781,8 @@ export default function Home() {
       },
       {
         enableHighAccuracy: true,
-        timeout: 8000,
-        maximumAge: 300000,
+        timeout: GEOLOCATION_TIMEOUT_MS,
+        maximumAge: 0,
       }
     );
   }
@@ -797,6 +808,9 @@ export default function Home() {
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
         });
+        setDesktopGpsAccuracyMeters(
+          Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null
+        );
         setDesktopLocationState("ready");
         setDesktopLocationMessage(null);
         setLocationContextError(null);
@@ -804,6 +818,7 @@ export default function Home() {
       (error) => {
         logHomeDataError(error);
         setDesktopGpsCoords(null);
+        setDesktopGpsAccuracyMeters(null);
         setDesktopLocationState("unavailable");
         setDesktopLocationMessage(
           error.code === error.PERMISSION_DENIED
@@ -813,8 +828,8 @@ export default function Home() {
       },
       {
         enableHighAccuracy: true,
-        timeout: 8000,
-        maximumAge: 300000,
+        timeout: GEOLOCATION_TIMEOUT_MS,
+        maximumAge: 0,
       }
     );
   }
@@ -1629,6 +1644,30 @@ export default function Home() {
       ? "Using your current location."
       : desktopLocationMessage ||
         "Allow location access or click a live station below to pin its forecast.";
+  const mobileGpsAccuracyText =
+    locationMode === "gps" && gpsAccuracyMeters !== null
+      ? `GPS accuracy: ±${Math.round(gpsAccuracyMeters)} m`
+      : null;
+  const mobileGpsCoordinatesText =
+    locationMode === "gps" && gpsCoords
+      ? `Lat/Lng: ${gpsCoords.latitude.toFixed(5)}, ${gpsCoords.longitude.toFixed(5)}`
+      : null;
+  const mobileShowPoorGpsAccuracyWarning =
+    locationMode === "gps" &&
+    gpsAccuracyMeters !== null &&
+    gpsAccuracyMeters > POOR_GPS_ACCURACY_THRESHOLD_METERS;
+  const desktopGpsAccuracyText =
+    !desktopPinnedPreview && desktopGpsAccuracyMeters !== null
+      ? `GPS accuracy: ±${Math.round(desktopGpsAccuracyMeters)} m`
+      : null;
+  const desktopGpsCoordinatesText =
+    !desktopPinnedPreview && desktopGpsCoords
+      ? `Lat/Lng: ${desktopGpsCoords.latitude.toFixed(5)}, ${desktopGpsCoords.longitude.toFixed(5)}`
+      : null;
+  const desktopShowPoorGpsAccuracyWarning =
+    !desktopPinnedPreview &&
+    desktopGpsAccuracyMeters !== null &&
+    desktopGpsAccuracyMeters > POOR_GPS_ACCURACY_THRESHOLD_METERS;
   const mobileTabTrackBaseTranslate = mobileTab === "forecast" ? "0%" : "-50%";
   const mobileTabTrackTransform = mobileTabIsDragging
     ? `translateX(calc(${mobileTabTrackBaseTranslate} + ${mobileTabDragOffsetPx}px))`
@@ -1733,11 +1772,14 @@ export default function Home() {
             <MobileDailySummaryCard
               CurrentLocationWeatherIcon={CurrentLocationWeatherIcon}
               displayLocationLabel={mobileLocationDisplayLabel}
+              detectedAreaLabel={mobileLocationDisplayLabel}
               error={null}
               errorClasses={locationContextErrorClasses}
               feelsLikeLabel={formatTemperature(
                 currentLocationSummary?.apparent_temperature
               )}
+              gpsAccuracyText={mobileGpsAccuracyText}
+              gpsCoordinatesText={mobileGpsCoordinatesText}
               isLoading={mobileSummaryLoading && !blockingLocationContextError}
               locationMessage={locationMessage}
               locationMode={locationMode}
@@ -1770,6 +1812,7 @@ export default function Home() {
               pickerOpen={shouldShowManualAreaPicker}
               selectedLocationLabel={selectedManualAreaLabel}
               shouldToneDownMotion={shouldToneDownMotion}
+              showPoorGpsAccuracyWarning={mobileShowPoorGpsAccuracyWarning}
               temperatureLabel={formatTemperature(currentLocationSummary?.temperature_2m)}
               todayHighLowLabel={`${formatTemperature(
                 currentLocationDaily?.temperature_2m_max
@@ -1933,6 +1976,21 @@ export default function Home() {
               </div>
 
               <div className="flex items-center gap-2">
+                {desktopGpsAccuracyText ? (
+                  <details className="relative">
+                    <summary className="inline-flex h-6 w-6 cursor-pointer list-none items-center justify-center rounded-full border border-slate-300 bg-slate-100 text-[11px] font-semibold text-slate-600 transition-colors hover:bg-slate-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-300">
+                      <Info className="h-3.5 w-3.5" />
+                    </summary>
+                    <div className="absolute right-0 z-20 mt-2 w-56 rounded-xl border border-slate-200/90 bg-white px-3 py-2 text-[11px] text-slate-600 shadow-[0_12px_24px_rgba(15,23,42,0.12)]">
+                      <p>Detected area: {desktopForecastTitle}</p>
+                      <p>{desktopGpsAccuracyText}</p>
+                      {desktopGpsCoordinatesText ? <p>{desktopGpsCoordinatesText}</p> : null}
+                      {desktopShowPoorGpsAccuracyWarning ? (
+                        <p>Location may be approximate.</p>
+                      ) : null}
+                    </div>
+                  </details>
+                ) : null}
                 <button
                   type="button"
                   onClick={resetDesktopForecastToCurrentLocation}
