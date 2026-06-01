@@ -10,6 +10,9 @@ import copy
 import re
 import time
 from collections import deque
+from threading import Lock
+import urllib.parse
+import urllib.request
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Header, Request
@@ -56,6 +59,35 @@ WEATHER_RATE_LIMITS: dict[str, int] = {
 }
 _weather_rate_limit_lock: asyncio.Lock | None = None
 _weather_rate_limit_hits: dict[str, deque[float]] = {}
+LOCATION_CONTEXT_MAX_RADIUS_KM = float(
+    os.getenv("LOCATION_CONTEXT_MAX_RADIUS_KM", "100")
+)
+LOCATION_CONTEXT_REVERSE_GEOCODE_URL = os.getenv(
+    "LOCATION_CONTEXT_REVERSE_GEOCODE_URL",
+    "https://nominatim.openstreetmap.org/reverse",
+)
+LOCATION_CONTEXT_REVERSE_GEOCODE_TIMEOUT_SECONDS = float(
+    os.getenv("LOCATION_CONTEXT_REVERSE_GEOCODE_TIMEOUT_SECONDS", "6")
+)
+LOCATION_CONTEXT_REVERSE_GEOCODE_USER_AGENT = os.getenv(
+    "LOCATION_CONTEXT_REVERSE_GEOCODE_USER_AGENT",
+    "WaterStatus/1.0 (location-context)",
+)
+LOCATION_CONTEXT_REVERSE_GEOCODE_ACCEPT_LANGUAGE = os.getenv(
+    "LOCATION_CONTEXT_REVERSE_GEOCODE_ACCEPT_LANGUAGE",
+    "en",
+)
+LOCATION_CONTEXT_REVERSE_GEOCODE_CACHE_TTL_SECONDS = int(
+    os.getenv("LOCATION_CONTEXT_REVERSE_GEOCODE_CACHE_TTL_SECONDS", "1800")
+)
+LOCATION_CONTEXT_REVERSE_GEOCODE_ERROR_CACHE_TTL_SECONDS = int(
+    os.getenv("LOCATION_CONTEXT_REVERSE_GEOCODE_ERROR_CACHE_TTL_SECONDS", "180")
+)
+LOCATION_CONTEXT_REVERSE_GEOCODE_COORD_PRECISION = int(
+    os.getenv("LOCATION_CONTEXT_REVERSE_GEOCODE_COORD_PRECISION", "4")
+)
+_reverse_geocode_label_cache: dict[str, tuple[float, str | None]] = {}
+_reverse_geocode_label_cache_lock = Lock()
 _DEFAULT_DEV_ORIGINS = (
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -129,6 +161,11 @@ async def _enforce_weather_rate_limit(
 
 def _reset_weather_rate_limit_state() -> None:
     _weather_rate_limit_hits.clear()
+
+
+def _reset_location_reverse_geocode_cache() -> None:
+    with _reverse_geocode_label_cache_lock:
+        _reverse_geocode_label_cache.clear()
 
 
 def _normalize_origin(raw: str) -> str:
@@ -937,6 +974,116 @@ def _nearest_location_label(
     return closest_label
 
 
+def _reverse_geocode_cache_key(latitude: float, longitude: float) -> str:
+    return (
+        f"{latitude:.{LOCATION_CONTEXT_REVERSE_GEOCODE_COORD_PRECISION}f},"
+        f"{longitude:.{LOCATION_CONTEXT_REVERSE_GEOCODE_COORD_PRECISION}f}"
+    )
+
+
+def _read_cached_reverse_geocode_label(cache_key: str) -> tuple[bool, str | None]:
+    now = time.monotonic()
+    with _reverse_geocode_label_cache_lock:
+        cached = _reverse_geocode_label_cache.get(cache_key)
+        if not cached:
+            return False, None
+
+        expires_at, label = cached
+        if expires_at <= now:
+            _reverse_geocode_label_cache.pop(cache_key, None)
+            return False, None
+
+        return True, label
+
+
+def _cache_reverse_geocode_label(cache_key: str, label: str | None, ttl_seconds: int) -> None:
+    ttl = max(1, int(ttl_seconds))
+    expires_at = time.monotonic() + ttl
+    with _reverse_geocode_label_cache_lock:
+        _reverse_geocode_label_cache[cache_key] = (expires_at, label)
+
+
+def _pick_reverse_geocode_locality_label(payload: dict[str, Any]) -> str | None:
+    address = payload.get("address")
+    if not isinstance(address, dict):
+        return None
+
+    preferred_keys = (
+        "city",
+        "town",
+        "municipality",
+        "village",
+        "suburb",
+        "city_district",
+        "locality",
+        "hamlet",
+        "quarter",
+        "neighbourhood",
+    )
+    fallback_keys = (
+        "district",
+        "county",
+        "state_district",
+        "state",
+    )
+
+    for key in preferred_keys + fallback_keys:
+        value = str(address.get(key) or "").strip()
+        if value:
+            return value
+
+    return None
+
+
+def _reverse_geocode_locality_label(latitude: float, longitude: float) -> str | None:
+    cache_key = _reverse_geocode_cache_key(latitude, longitude)
+    cache_hit, cached_label = _read_cached_reverse_geocode_label(cache_key)
+    if cache_hit:
+        return cached_label
+
+    params = urllib.parse.urlencode(
+        {
+            "format": "jsonv2",
+            "lat": f"{latitude:.6f}",
+            "lon": f"{longitude:.6f}",
+            "addressdetails": "1",
+            "zoom": "14",
+            "accept-language": LOCATION_CONTEXT_REVERSE_GEOCODE_ACCEPT_LANGUAGE,
+        }
+    )
+    request = urllib.request.Request(
+        f"{LOCATION_CONTEXT_REVERSE_GEOCODE_URL}?{params}",
+        headers={
+            "Accept": "application/json",
+            "User-Agent": LOCATION_CONTEXT_REVERSE_GEOCODE_USER_AGENT,
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=LOCATION_CONTEXT_REVERSE_GEOCODE_TIMEOUT_SECONDS,
+        ) as response:
+            payload = json.loads(response.read().decode("utf-8", "ignore"))
+    except Exception:
+        _cache_reverse_geocode_label(
+            cache_key,
+            None,
+            LOCATION_CONTEXT_REVERSE_GEOCODE_ERROR_CACHE_TTL_SECONDS,
+        )
+        return None
+
+    label = _pick_reverse_geocode_locality_label(payload) if isinstance(payload, dict) else None
+    _cache_reverse_geocode_label(
+        cache_key,
+        label,
+        LOCATION_CONTEXT_REVERSE_GEOCODE_CACHE_TTL_SECONDS
+        if label
+        else LOCATION_CONTEXT_REVERSE_GEOCODE_ERROR_CACHE_TTL_SECONDS,
+    )
+    return label
+
+
 def _normalize_location_mode(mode: str | None) -> str:
     return "manual" if str(mode or "").strip().lower() == "manual" else "gps"
 
@@ -1502,11 +1649,30 @@ async def get_weather_location_context(
     if not math.isfinite(radius_km) or radius_km <= 0:
         raise HTTPException(status_code=400, detail="radius_km must be greater than 0.")
 
+    normalized_mode = _normalize_location_mode(mode)
+    bounded_radius_km = min(radius_km, LOCATION_CONTEXT_MAX_RADIUS_KM)
     sensors = await _load_sensor_docs_or_fallback()
-    normalized_label = str(label or "").strip()
-    if not normalized_label:
+    nearest_label = _nearest_location_label(latitude, longitude, sensors)
+    client_label = str(label or "").strip()
+    reverse_label = None
+    if normalized_mode == "gps":
+        reverse_label = await asyncio.to_thread(
+            _reverse_geocode_locality_label,
+            latitude,
+            longitude,
+        )
+
+    if normalized_mode == "manual":
         normalized_label = (
-            _nearest_location_label(latitude, longitude, sensors)
+            client_label
+            or nearest_label
+            or f"{latitude:.3f}, {longitude:.3f}"
+        )
+    else:
+        normalized_label = (
+            reverse_label
+            or client_label
+            or nearest_label
             or f"{latitude:.3f}, {longitude:.3f}"
         )
 
@@ -1514,13 +1680,13 @@ async def get_weather_location_context(
         get_location_forecast_context,
         latitude,
         longitude,
-        radius_km,
+        bounded_radius_km,
     )
     context["location"] = {
         "label": normalized_label,
         "latitude": latitude,
         "longitude": longitude,
-        "mode": _normalize_location_mode(mode),
+        "mode": normalized_mode,
     }
     return context
 

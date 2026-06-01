@@ -269,6 +269,7 @@ export function ForecastTimelineCard({
           ? "rounded-[1.6rem] border border-[var(--ws-border-subtle)] bg-[linear-gradient(180deg,rgba(240,249,255,0.7),rgba(255,255,255,0.8))]"
           : "rounded-[1.25rem] border border-[var(--ws-border-subtle)] bg-[linear-gradient(180deg,rgba(240,249,255,0.7),rgba(255,255,255,0.8))]",
         isCompact ? "px-2.5 py-2" : "px-3.5 py-1",
+        "flex flex-col",
         className,
       ].join(" ")}
     >
@@ -306,7 +307,12 @@ export function ForecastTimelineCard({
         </div>
       </div>
 
-      <div className={isCompact ? "mt-1.5 space-y-1.5" : "mt-2.5 space-y-2.5"}>
+      <div
+        className={[
+          isCompact ? "mt-1.5 gap-1.5" : "mt-2.5 gap-2.5",
+          "flex min-h-0 flex-1 flex-col",
+        ].join(" ")}
+      >
         <div
           className={[
             "inline-flex items-center rounded-full border border-slate-200/80 bg-white/88 text-[11px] font-medium text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.06)] tabular-nums",
@@ -318,7 +324,10 @@ export function ForecastTimelineCard({
 
         <div
           ref={chartViewportRef}
-          className={isCompact ? "h-44 min-h-[11rem]" : "h-40 min-h-[10rem]"}
+          className={[
+            isCompact ? "min-h-[11rem]" : "min-h-[10rem]",
+            "h-full flex-1",
+          ].join(" ")}
         >
           {hasChartViewport ? (
             <ComposedChart

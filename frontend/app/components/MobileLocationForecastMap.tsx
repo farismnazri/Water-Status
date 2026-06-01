@@ -31,6 +31,7 @@ export function MobileLocationForecastMap({
   error,
   staticFallback = false,
   paused = false,
+  className,
   onPausedChange,
   onLayerChange,
   onInteract,
@@ -46,6 +47,7 @@ export function MobileLocationForecastMap({
   error: string | null;
   staticFallback?: boolean;
   paused?: boolean;
+  className?: string;
   onPausedChange?: (paused: boolean) => void;
   onLayerChange?: (layer: "precipitation" | "temperature") => void;
   onInteract?: () => void;
@@ -64,7 +66,13 @@ export function MobileLocationForecastMap({
 
   return (
     <div
-      className="relative z-0 overflow-hidden rounded-[1.6rem] border border-[var(--ws-border-subtle)] bg-[linear-gradient(180deg,rgba(240,249,255,0.78),rgba(226,232,240,0.5))]"
+      className={[
+        "relative z-0 overflow-hidden rounded-[1.6rem] border border-[var(--ws-border-subtle)] bg-[linear-gradient(180deg,rgba(240,249,255,0.78),rgba(226,232,240,0.5))]",
+        "grid h-[19.25rem] min-h-[19.25rem] grid-rows-[auto_minmax(0,1fr)]",
+        className,
+      ]
+        .filter(Boolean)
+        .join(" ")}
       onPointerDown={onInteract}
       onTouchStart={onInteract}
     >
@@ -89,7 +97,7 @@ export function MobileLocationForecastMap({
         ) : null}
       </div>
 
-      <div className="relative h-[15.5rem] overflow-hidden bg-white/45">
+      <div className="relative min-h-0 overflow-hidden bg-white/45">
         {isClient && hasMap ? (
           <Suspense fallback={null}>
             <LazyMobileLocationForecastLeafletMap

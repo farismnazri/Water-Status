@@ -171,6 +171,7 @@ class WeatherContextTests(unittest.TestCase):
     def setUp(self):
         weather_context._reset_forecast_cache()
         main._reset_weather_rate_limit_state()
+        main._reset_location_reverse_geocode_cache()
 
     def test_batches_nearby_coordinates_and_reuses_cache(self):
         sensors = [
@@ -530,6 +531,10 @@ class ForecastEndpointTests(unittest.IsolatedAsyncioTestCase):
                     "longitude": 101.7117,
                 }
             ],
+        ), patch.object(
+            main,
+            "_reverse_geocode_locality_label",
+            return_value=None,
         ):
             payload = await main.get_weather_location_context(
                 request=make_request(),
@@ -545,6 +550,128 @@ class ForecastEndpointTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["location"]["mode"], "gps")
         self.assertEqual(payload["current"]["temperature_2m"], 30.2)
         self.assertEqual(payload["map"]["radius_km"], 8)
+
+    async def test_location_context_endpoint_caps_radius_to_100km(self):
+        context_calls = []
+
+        def fake_context(latitude, longitude, radius_km):
+            context_calls.append((latitude, longitude, radius_km))
+            return {
+                "status": "ok",
+                "source": "open-meteo.forecast",
+                "generated_at": "2026-03-18T10:00:00+00:00",
+                "current": {"temperature_2m": 30.2},
+                "next_6h": {"max_precipitation_probability": 65},
+                "daily": [],
+                "next_hour_30m": [],
+                "hourly_timeline": [],
+                "map": {"radius_km": radius_km, "samples": [], "frames": []},
+            }
+
+        with patch.object(
+            main,
+            "get_location_forecast_context",
+            side_effect=fake_context,
+        ), patch.object(
+            main,
+            "_load_sensor_docs_or_fallback",
+            return_value=[],
+        ):
+            payload = await main.get_weather_location_context(
+                request=make_request(),
+                latitude=3.1563,
+                longitude=101.7117,
+                radius_km=180,
+                label="KLCC",
+                mode="manual",
+            )
+
+        self.assertEqual(context_calls[0][2], 100)
+        self.assertEqual(payload["map"]["radius_km"], 100)
+
+    async def test_location_context_endpoint_prefers_reverse_geocode_label_for_gps(self):
+        with patch.object(
+            main,
+            "get_location_forecast_context",
+            return_value={
+                "status": "ok",
+                "source": "open-meteo.forecast",
+                "generated_at": "2026-03-18T10:00:00+00:00",
+                "current": {"temperature_2m": 30.2},
+                "next_6h": {"max_precipitation_probability": 65},
+                "daily": [],
+                "next_hour_30m": [],
+                "hourly_timeline": [],
+                "map": {"radius_km": 8, "samples": [], "frames": []},
+            },
+        ), patch.object(
+            main,
+            "_load_sensor_docs_or_fallback",
+            return_value=[
+                {
+                    "_id": "sensor-a",
+                    "location": "Gombak",
+                    "latitude": 3.249,
+                    "longitude": 101.730,
+                }
+            ],
+        ), patch.object(
+            main,
+            "_reverse_geocode_locality_label",
+            return_value="Kajang",
+        ):
+            payload = await main.get_weather_location_context(
+                request=make_request(),
+                latitude=2.996,
+                longitude=101.790,
+                radius_km=8,
+                label="Sepang",
+                mode="gps",
+            )
+
+        self.assertEqual(payload["location"]["label"], "Kajang")
+
+    async def test_location_context_endpoint_falls_back_when_reverse_geocode_missing(self):
+        with patch.object(
+            main,
+            "get_location_forecast_context",
+            return_value={
+                "status": "ok",
+                "source": "open-meteo.forecast",
+                "generated_at": "2026-03-18T10:00:00+00:00",
+                "current": {"temperature_2m": 30.2},
+                "next_6h": {"max_precipitation_probability": 65},
+                "daily": [],
+                "next_hour_30m": [],
+                "hourly_timeline": [],
+                "map": {"radius_km": 8, "samples": [], "frames": []},
+            },
+        ), patch.object(
+            main,
+            "_load_sensor_docs_or_fallback",
+            return_value=[
+                {
+                    "_id": "sensor-a",
+                    "location": "Gombak",
+                    "latitude": 3.249,
+                    "longitude": 101.730,
+                }
+            ],
+        ), patch.object(
+            main,
+            "_reverse_geocode_locality_label",
+            return_value=None,
+        ):
+            payload = await main.get_weather_location_context(
+                request=make_request(),
+                latitude=2.996,
+                longitude=101.790,
+                radius_km=8,
+                label="Sepang",
+                mode="gps",
+            )
+
+        self.assertEqual(payload["location"]["label"], "Sepang")
 
     async def test_location_context_endpoint_returns_429_after_limit(self):
         request = make_request("203.0.113.5")
@@ -564,6 +691,7 @@ class ForecastEndpointTests(unittest.IsolatedAsyncioTestCase):
             patch.object(main.time, "monotonic", return_value=1_000.0),
             patch.object(main, "_load_sensor_docs_or_fallback", return_value=[]),
             patch.object(main, "get_location_forecast_context", return_value=context_payload),
+            patch.object(main, "_reverse_geocode_locality_label", return_value=None),
         ):
             for _ in range(main.WEATHER_RATE_LIMITS["location-context"]):
                 payload = await main.get_weather_location_context(

@@ -1630,14 +1630,29 @@ export default function Home() {
   const blockingLocationContextError = hasUsableLocationContext
     ? null
     : locationContextError;
+  const contextLocationLabel =
+    typeof locationContext?.location?.label === "string"
+      ? locationContext.location.label.trim()
+      : "";
   const mobileLocationDisplayLabel =
-    mobileLocationTarget?.label ||
-    manualArea?.label ||
-    locationContext?.location.label ||
-    "Choose an area";
+    locationMode === "gps"
+      ? contextLocationLabel ||
+        mobileLocationTarget?.label ||
+        manualArea?.label ||
+        "Choose an area"
+      : mobileLocationTarget?.label ||
+        manualArea?.label ||
+        contextLocationLabel ||
+        "Choose an area";
   const selectedManualAreaLabel = manualArea?.label ?? "";
   const desktopForecastTitle =
-    desktopForecastTarget?.label || locationContext?.location.label || "Current location";
+    desktopForecastTarget?.mode === "gps"
+      ? contextLocationLabel ||
+        desktopForecastTarget?.label ||
+        "Current location"
+      : desktopForecastTarget?.label ||
+        contextLocationLabel ||
+        "Current location";
   const desktopForecastCaption = desktopPinnedPreview
     ? `${desktopPinnedPreview.name} pinned from the live sensor board.`
     : desktopForecastTarget
@@ -1681,10 +1696,10 @@ export default function Home() {
     !blockingLocationContextError &&
     ((!mobileLocationTarget && isMobileHome) ||
       (locationMode === "gps" && locationState === "locating"));
-  const mobilePanelMinHeightClass = "min-h-[19.25rem]";
+  const mobilePanelHeightClass = "h-[19.25rem]";
   const mobileForecastPanel = locationContextLoading && !locationContext ? (
     <div
-      className={`space-y-2 rounded-[1.6rem] border border-[var(--ws-border-subtle)] bg-white/86 p-3 shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${mobilePanelMinHeightClass}`}
+      className={`space-y-2 rounded-[1.6rem] border border-[var(--ws-border-subtle)] bg-white/86 p-3 shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${mobilePanelHeightClass}`}
     >
       <div className="ws-skeleton h-5 w-28 rounded-full" />
       <div className="ws-skeleton h-4 w-44 rounded-full" />
@@ -1692,18 +1707,18 @@ export default function Home() {
     </div>
   ) : showMobileTargetPendingMessage ? (
     <div
-      className={`rounded-[1.6rem] border border-slate-200/80 bg-white/82 px-3 py-3 text-sm text-slate-600 shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${mobilePanelMinHeightClass}`}
+      className={`rounded-[1.6rem] border border-slate-200/80 bg-white/82 px-3 py-3 text-sm text-slate-600 shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${mobilePanelHeightClass}`}
     >
       We&apos;re preparing your nearby forecast view.
     </div>
   ) : blockingLocationContextError ? (
     <div
-      className={`rounded-[1.6rem] border px-3 py-3 text-sm shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${mobilePanelMinHeightClass} ${locationContextErrorClasses}`}
+      className={`rounded-[1.6rem] border px-3 py-3 text-sm shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${mobilePanelHeightClass} ${locationContextErrorClasses}`}
     >
       {blockingLocationContextError}
     </div>
   ) : (
-    <div className="space-y-2 h-full">
+    <div className="space-y-2">
       {locationContextNotice ? (
         <div
           className={`rounded-[1.15rem] border px-3 py-2 text-xs ${locationContextErrorClasses}`}
@@ -1714,7 +1729,7 @@ export default function Home() {
       <Suspense
         fallback={
           <div
-            className={`space-y-2 rounded-[1.6rem] border border-[var(--ws-border-subtle)] bg-white/86 p-3 shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${mobilePanelMinHeightClass}`}
+            className={`space-y-2 rounded-[1.6rem] border border-[var(--ws-border-subtle)] bg-white/86 p-3 shadow-[0_18px_40px_rgba(15,23,42,0.08)] ${mobilePanelHeightClass}`}
           >
             <div className="ws-skeleton h-5 w-28 rounded-full" />
             <div className="ws-skeleton h-4 w-44 rounded-full" />
@@ -1727,7 +1742,7 @@ export default function Home() {
           metric={mobileForecastMetric}
           onMetricChange={setMobileForecastMetric}
           variant="mobile"
-          className={`h-full ${mobilePanelMinHeightClass}`}
+          className={mobilePanelHeightClass}
         />
       </Suspense>
 
@@ -1735,6 +1750,7 @@ export default function Home() {
   );
   const mobileMapPanel = (
     <MobileLocationForecastMap
+      className={mobilePanelHeightClass}
       center={{
         latitude: mobileLocationTarget?.latitude ?? 3.1563,
         longitude: mobileLocationTarget?.longitude ?? 101.7117,

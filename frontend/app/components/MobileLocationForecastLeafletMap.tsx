@@ -1,16 +1,14 @@
 // @ts-nocheck
 import { useEffect, useMemo, useRef } from "react";
-import { Circle, CircleMarker, MapContainer, TileLayer, useMap } from "react-leaflet";
+import { CircleMarker, MapContainer, TileLayer, useMap } from "react-leaflet";
 import type { Point } from "leaflet";
 import type {
   WeatherLocationMapFrame,
   WeatherLocationMapSample,
 } from "../lib/weather";
 import {
-  LOCAL_MAP_FOCUS_RADIUS_KM,
   LOCAL_MAP_SCALE_BAR_KM,
   MOBILE_LOCATION_FORECAST_LAYER_VISUALS,
-  clamp,
   getGradientColorForLayer,
   normalizeValueToDomain,
   type MobileLocationForecastLayer,
@@ -32,6 +30,39 @@ function radiusToDeltas(latitude: number, radiusKm: number) {
 
 function longitudeDeltaForKm(latitude: number, distanceKm: number) {
   return distanceKm / (111 * Math.max(Math.cos((latitude * Math.PI) / 180), 0.2));
+}
+
+function getFrameValueDomain(
+  values: number[],
+  fallbackDomain: MobileLocationForecastValueDomain | null,
+  layer: MobileLocationForecastLayer
+): MobileLocationForecastValueDomain | null {
+  if (values.length === 0) return fallbackDomain;
+
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+  let sum = 0;
+
+  for (const value of values) {
+    if (!Number.isFinite(value)) continue;
+    if (value < min) min = value;
+    if (value > max) max = value;
+    sum += value;
+  }
+
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    return fallbackDomain;
+  }
+
+  const mean = sum / values.length;
+  const minSpread = layer === "temperature" ? 1.2 : 0.35;
+  const spread = max - min;
+  if (spread >= minSpread) {
+    return { min, max };
+  }
+
+  const half = minSpread / 2;
+  return { min: mean - half, max: mean + half };
 }
 
 function interpolateFieldValue(
@@ -83,6 +114,24 @@ function LocationMapBounds({
   return null;
 }
 
+function LocationMapResizeSync() {
+  const map = useMap();
+
+  useEffect(() => {
+    const container = map.getContainer();
+    if (typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => {
+      map.invalidateSize({ pan: false, debounceMoveend: true });
+    });
+    observer.observe(container);
+
+    return () => observer.disconnect();
+  }, [map]);
+
+  return null;
+}
+
 function ForecastFieldOverlay({
   center,
   samples,
@@ -114,6 +163,10 @@ function ForecastFieldOverlay({
       }),
     [frameValuesById, samples]
   );
+  const renderDomain = useMemo(() => {
+    const frameValues = renderableSamples.map((sample) => sample.value);
+    return getFrameValueDomain(frameValues, valueDomain, layer);
+  }, [layer, renderableSamples, valueDomain]);
 
   useEffect(() => {
     onMetricsChangeRef.current = onMetricsChange;
@@ -188,12 +241,7 @@ function ForecastFieldOverlay({
         center.latitude,
         center.longitude + longitudeDeltaForKm(center.latitude, LOCAL_MAP_SCALE_BAR_KM),
       ]);
-      const focusPoint = map.latLngToContainerPoint([
-        center.latitude,
-        center.longitude + longitudeDeltaForKm(center.latitude, LOCAL_MAP_FOCUS_RADIUS_KM),
-      ]);
       const scaleWidthPx = Math.max(0, Math.abs(scalePoint.x - centerPoint.x));
-      const focusRadiusPx = Math.max(12, Math.abs(focusPoint.x - centerPoint.x));
 
       if (
         lastScaleWidthRef.current === null ||
@@ -203,7 +251,7 @@ function ForecastFieldOverlay({
         onMetricsChangeRef.current?.({ scaleWidthPx });
       }
 
-      if (!valueDomain || renderableSamples.length === 0) {
+      if (!renderDomain || renderableSamples.length === 0) {
         return;
       }
 
@@ -212,13 +260,14 @@ function ForecastFieldOverlay({
         value: sample.value,
       }));
 
-      const edgeSoftnessPx = Math.max(10, focusRadiusPx * 0.16);
-      const smoothingPx = Math.max(scaleWidthPx * 0.34, focusRadiusPx * 0.2, 18);
-      const rasterPadding = Math.max(20, focusRadiusPx * 0.34);
-      const left = Math.max(0, Math.floor(centerPoint.x - focusRadiusPx - rasterPadding));
-      const top = Math.max(0, Math.floor(centerPoint.y - focusRadiusPx - rasterPadding));
-      const width = Math.min(size.x - left, Math.ceil((focusRadiusPx + rasterPadding) * 2));
-      const height = Math.min(size.y - top, Math.ceil((focusRadiusPx + rasterPadding) * 2));
+      const smoothingPx =
+        layer === "temperature"
+          ? Math.max(scaleWidthPx * 0.2, 12)
+          : Math.max(scaleWidthPx * 0.26, 16);
+      const left = 0;
+      const top = 0;
+      const width = size.x;
+      const height = size.y;
 
       if (width <= 0 || height <= 0) {
         return;
@@ -243,58 +292,42 @@ function ForecastFieldOverlay({
 
         for (let xIndex = 0; xIndex < offscreen.width; xIndex += 1) {
           const x = left + ((xIndex + 0.5) / offscreen.width) * width;
-          const dx = x - centerPoint.x;
-          const dy = y - centerPoint.y;
-          const distanceFromCenter = Math.hypot(dx, dy);
-
-          if (distanceFromCenter > focusRadiusPx) {
-            continue;
-          }
 
           const interpolatedValue = interpolateFieldValue(projectedSamples, x, y, smoothingPx);
           if (interpolatedValue === null) {
             continue;
           }
 
-          const normalized = normalizeValueToDomain(interpolatedValue, valueDomain);
+          const normalizedBase = normalizeValueToDomain(interpolatedValue, renderDomain);
+          const normalized =
+            layer === "temperature"
+              ? Math.pow(normalizedBase, 0.82)
+              : Math.pow(normalizedBase, 0.9);
           const [red, green, blue] = getGradientColorForLayer(layer, normalized);
-          const edgeFade =
-            distanceFromCenter <= focusRadiusPx - edgeSoftnessPx
-              ? 1
-              : clamp(
-                  (focusRadiusPx - distanceFromCenter) / Math.max(edgeSoftnessPx, 0.0001),
-                  0,
-                  1
-                );
           const colorStrength =
             layer === "temperature"
-              ? 0.55 + normalized * 0.45
-              : 0.34 + normalized * 0.66;
+              ? 0.62 + normalized * 0.38
+              : 0.42 + normalized * 0.58;
           const pixelIndex = (yIndex * offscreen.width + xIndex) * 4;
 
           data[pixelIndex] = red;
           data[pixelIndex + 1] = green;
           data[pixelIndex + 2] = blue;
           data[pixelIndex + 3] = Math.round(
-            255 * layerVisuals.fieldAlpha * colorStrength * edgeFade
+            255 * layerVisuals.fieldAlpha * colorStrength
           );
         }
       }
 
       offscreenContext.putImageData(imageData, 0, 0);
 
-      context.save();
-      context.beginPath();
-      context.arc(centerPoint.x, centerPoint.y, focusRadiusPx, 0, Math.PI * 2);
-      context.clip();
       context.fillStyle =
         layer === "temperature"
-          ? "rgba(255,244,238,0.08)"
-          : "rgba(239,246,255,0.1)";
-      context.fillRect(left, top, width, height);
+          ? "rgba(255,244,238,0.03)"
+          : "rgba(239,246,255,0.05)";
+      context.fillRect(0, 0, size.x, size.y);
       context.imageSmoothingEnabled = true;
-      context.drawImage(offscreen, left, top, width, height);
-      context.restore();
+      context.drawImage(offscreen, 0, 0, size.x, size.y);
     };
 
     const scheduleDraw = () => {
@@ -340,7 +373,7 @@ function ForecastFieldOverlay({
     layer,
     map,
     renderableSamples,
-    valueDomain,
+    renderDomain,
   ]);
 
   return null;
@@ -380,7 +413,6 @@ export function MobileLocationForecastLeafletMap({
     [frame?.samples, layer]
   );
 
-  const focusRadiusMeters = Math.min(LOCAL_MAP_FOCUS_RADIUS_KM * 1000, radiusKm * 1000);
   const shouldRenderField =
     !staticFallback &&
     Boolean(valueDomain) &&
@@ -401,6 +433,7 @@ export function MobileLocationForecastLeafletMap({
         url="https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png"
       />
 
+      <LocationMapResizeSync />
       <LocationMapBounds center={center} radiusKm={radiusKm} />
 
       {shouldRenderField ? (
@@ -413,44 +446,6 @@ export function MobileLocationForecastLeafletMap({
           onMetricsChange={onMetricsChange}
         />
       ) : null}
-
-      {staticFallback ? (
-        <Circle
-          center={[center.latitude, center.longitude]}
-          radius={Math.max(1200, radiusKm * 1000)}
-          pathOptions={{
-            color: "#0ea5e9",
-            fillColor: "#7dd3fc",
-            fillOpacity: 0.08,
-            weight: 2,
-            dashArray: "6 6",
-          }}
-        />
-      ) : null}
-
-      <Circle
-        center={[center.latitude, center.longitude]}
-        radius={focusRadiusMeters}
-        pathOptions={{
-          color: layer === "temperature" ? "#fb923c" : "#38bdf8",
-          weight: 8,
-          opacity: 0.11,
-          fill: false,
-        }}
-      />
-
-      <Circle
-        center={[center.latitude, center.longitude]}
-        radius={focusRadiusMeters}
-        pathOptions={{
-          color: layer === "temperature" ? "#0f172a" : "#0b4a6f",
-          weight: 2,
-          opacity: layer === "temperature" ? 0.4 : 0.36,
-          fillColor: "#ffffff",
-          fillOpacity: layer === "temperature" ? 0.018 : 0.014,
-          dashArray: layer === "temperature" ? undefined : "5 5",
-        }}
-      />
 
       <CircleMarker
         center={[center.latitude, center.longitude]}
