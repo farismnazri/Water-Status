@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 import math
 import os
 import time
@@ -70,6 +71,31 @@ _MAP_SAMPLE_GRID: tuple[tuple[str, int, int], ...] = (
 
 _forecast_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _forecast_cache_lock = Lock()
+logger = logging.getLogger("sensor-ingest.weather")
+
+
+def _build_open_meteo_url(
+    coords: list[tuple[float, float]],
+    *,
+    include_minutely_15: bool = True,
+) -> str:
+    params = {
+        "latitude": ",".join(f"{latitude:.5f}" for latitude, _ in coords),
+        "longitude": ",".join(f"{longitude:.5f}" for _, longitude in coords),
+        "timezone": OPEN_METEO_TIMEZONE,
+        "cell_selection": "land",
+        "current": ",".join(_CURRENT_FIELDS),
+        "hourly": ",".join(_HOURLY_FIELDS),
+        "daily": ",".join(_DAILY_FIELDS),
+        "forecast_hours": "12",
+        "past_hours": "6",
+        "forecast_days": "3",
+    }
+    if include_minutely_15:
+        params["minutely_15"] = ",".join(_MINUTELY_15_FIELDS)
+        params["forecast_minutely_15"] = "4"
+
+    return f"{OPEN_METEO_FORECAST_URL}?{urllib.parse.urlencode(params)}"
 
 
 def _fetch_json(url: str) -> Any:
@@ -317,23 +343,7 @@ def _fetch_open_meteo_payloads(
     if not coords:
         return []
 
-    params = {
-        "latitude": ",".join(f"{latitude:.5f}" for latitude, _ in coords),
-        "longitude": ",".join(f"{longitude:.5f}" for _, longitude in coords),
-        "timezone": OPEN_METEO_TIMEZONE,
-        "cell_selection": "land",
-        "current": ",".join(_CURRENT_FIELDS),
-        "hourly": ",".join(_HOURLY_FIELDS),
-        "daily": ",".join(_DAILY_FIELDS),
-        "forecast_hours": "12",
-        "past_hours": "6",
-        "forecast_days": "3",
-    }
-    if include_minutely_15:
-        params["minutely_15"] = ",".join(_MINUTELY_15_FIELDS)
-        params["forecast_minutely_15"] = "4"
-
-    url = f"{OPEN_METEO_FORECAST_URL}?{urllib.parse.urlencode(params)}"
+    url = _build_open_meteo_url(coords, include_minutely_15=include_minutely_15)
     payload = _fetch_json(url)
 
     if isinstance(payload, list):
@@ -343,7 +353,47 @@ def _fetch_open_meteo_payloads(
     return []
 
 
-def _get_cached_payloads_by_coord(coords: list[tuple[float, float]]) -> dict[str, dict[str, Any]]:
+def _fetch_single_coord_payload(
+    latitude: float,
+    longitude: float,
+    *,
+    generated_at: datetime,
+    include_minutely_15: bool = True,
+) -> dict[str, Any] | None:
+    attempts = [include_minutely_15]
+    if include_minutely_15:
+        attempts.append(False)
+
+    for include_minutely_attempt in attempts:
+        try:
+            payloads = _fetch_open_meteo_payloads(
+                [(latitude, longitude)],
+                include_minutely_15=include_minutely_attempt,
+            )
+            if not payloads:
+                raise ValueError("Open-Meteo returned no payloads for a single coordinate request.")
+            return _stamp_payload(payloads[0], generated_at)
+        except Exception as exc:
+            logger.warning(
+                "Open-Meteo single-coordinate fetch failed for latitude=%s longitude=%s "
+                "include_minutely_15=%s error=%s: %s url=%s",
+                f"{latitude:.5f}",
+                f"{longitude:.5f}",
+                include_minutely_attempt,
+                exc.__class__.__name__,
+                exc,
+                _build_open_meteo_url(
+                    [(latitude, longitude)],
+                    include_minutely_15=include_minutely_attempt,
+                ),
+            )
+
+    return None
+
+
+def _get_cached_payloads_by_coord(
+    coords: list[tuple[float, float]],
+) -> dict[str, dict[str, Any]]:
     payloads_by_coord: dict[str, dict[str, Any]] = {}
     missing_coords: list[tuple[str, float, float]] = []
     seen_missing: set[str] = set()
@@ -374,6 +424,11 @@ def _get_cached_payloads_by_coord(coords: list[tuple[float, float]]) -> dict[str
         fetched_payloads = _fetch_open_meteo_payloads(
             [(latitude, longitude) for _, latitude, longitude in missing_coords]
         )
+        if len(fetched_payloads) != len(missing_coords):
+            raise ValueError(
+                "Open-Meteo returned "
+                f"{len(fetched_payloads)} payload(s) for {len(missing_coords)} coordinate(s)."
+            )
         fetched_by_coord: dict[str, dict[str, Any]] = {}
         for index, payload in enumerate(fetched_payloads):
             if index >= len(missing_coords):
@@ -408,6 +463,14 @@ def _get_cached_payloads_by_coord(coords: list[tuple[float, float]]) -> dict[str
                     copy.deepcopy(cached_payload),
                 )
     except Exception:
+        logger.warning(
+            "Open-Meteo batch fetch failed for %s coordinate(s); retrying per coordinate. url=%s",
+            len(missing_coords),
+            _build_open_meteo_url(
+                [(latitude, longitude) for _, latitude, longitude in missing_coords]
+            ),
+            exc_info=True,
+        )
         with _forecast_cache_lock:
             for coord_key, _, _ in missing_coords:
                 fallback_payload = stale_payloads_by_coord.get(coord_key)
@@ -417,13 +480,31 @@ def _get_cached_payloads_by_coord(coords: list[tuple[float, float]]) -> dict[str
                         time.monotonic() + OPEN_METEO_STALE_IF_ERROR_TTL_SECONDS,
                         copy.deepcopy(fallback_payload),
                     )
-                    continue
+                else:
+                    error_payload = _error_payload(generated_at)
+                    payloads_by_coord[coord_key] = copy.deepcopy(error_payload)
+                    _forecast_cache[coord_key] = (
+                        time.monotonic() + OPEN_METEO_ERROR_CACHE_TTL_SECONDS,
+                        copy.deepcopy(error_payload),
+                    )
 
-                error_payload = _error_payload(generated_at)
-                payloads_by_coord[coord_key] = copy.deepcopy(error_payload)
+        for coord_key, latitude, longitude in missing_coords:
+            if coord_key in stale_payloads_by_coord:
+                continue
+
+            recovered_payload = _fetch_single_coord_payload(
+                latitude,
+                longitude,
+                generated_at=generated_at,
+            )
+            if recovered_payload is None:
+                continue
+
+            with _forecast_cache_lock:
+                payloads_by_coord[coord_key] = copy.deepcopy(recovered_payload)
                 _forecast_cache[coord_key] = (
-                    time.monotonic() + OPEN_METEO_ERROR_CACHE_TTL_SECONDS,
-                    copy.deepcopy(error_payload),
+                    time.monotonic() + OPEN_METEO_CACHE_TTL_SECONDS,
+                    copy.deepcopy(recovered_payload),
                 )
 
     return payloads_by_coord

@@ -354,11 +354,46 @@ class WeatherContextTests(unittest.TestCase):
             side_effect=RuntimeError("network down"),
         ) as fetch_mock:
             first = weather_context.get_location_forecast_context(3.1563, 101.7117, 8)
+            first_call_count = fetch_mock.call_count
             second = weather_context.get_location_forecast_context(3.1563, 101.7117, 8)
 
-        self.assertEqual(fetch_mock.call_count, 1)
+        self.assertGreater(first_call_count, 1)
+        self.assertEqual(fetch_mock.call_count, first_call_count)
         self.assertEqual(first["status"], "error")
         self.assertEqual(second["status"], "error")
+
+    def test_location_context_recovers_center_forecast_when_batch_fetch_fails(self):
+        center_payload = make_forecast_payload(
+            temperature=30.2,
+            apparent_temperature=33.7,
+            humidity=73,
+            wind=8,
+            weather_code=2,
+        )
+
+        def fake_fetch(coords, *_, **__):
+            if len(coords) > 1:
+                raise RuntimeError("batched upstream failure")
+
+            latitude, longitude = coords[0]
+            if round(latitude, 5) == 2.92640 and round(longitude, 5) == 101.69640:
+                return [center_payload]
+
+            raise RuntimeError("sample fetch failed")
+
+        with patch.object(weather_context, "_fetch_open_meteo_payloads", side_effect=fake_fetch):
+            context = weather_context.get_location_forecast_context(2.9264, 101.6964, 8)
+
+        self.assertEqual(context["status"], "ok")
+        self.assertEqual(context["current"]["temperature_2m"], 30.2)
+        self.assertEqual(len(context["daily"]), 3)
+        self.assertEqual(len(context["hourly_timeline"]), 13)
+        self.assertEqual(len(context["map"]["frames"]), 6)
+        first_frame_samples = context["map"]["frames"][0]["samples"]
+        center_sample = next(sample for sample in first_frame_samples if sample["sample_id"] == "center")
+        edge_sample = next(sample for sample in first_frame_samples if sample["sample_id"] == "north-west")
+        self.assertEqual(center_sample["temperature_2m"], 30.2)
+        self.assertIsNone(edge_sample["temperature_2m"])
 
 
 class SensorIngestTests(unittest.TestCase):
