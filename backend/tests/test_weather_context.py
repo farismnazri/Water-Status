@@ -1,5 +1,6 @@
 import os
 import sys
+import urllib.error
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -165,6 +166,16 @@ def make_request(client_ip: str = "198.51.100.10", forwarded_for: str | None = N
     if forwarded_for:
         headers["x-forwarded-for"] = forwarded_for
     return SimpleNamespace(headers=headers, client=SimpleNamespace(host=client_ip))
+
+
+def make_open_meteo_rate_limit_error():
+    return urllib.error.HTTPError(
+        "https://api.open-meteo.com/v1/forecast?latitude=2.92640&longitude=101.69640",
+        429,
+        "Too Many Requests",
+        hdrs=None,
+        fp=None,
+    )
 
 
 class WeatherContextTests(unittest.TestCase):
@@ -361,6 +372,67 @@ class WeatherContextTests(unittest.TestCase):
         self.assertEqual(fetch_mock.call_count, first_call_count)
         self.assertEqual(first["status"], "error")
         self.assertEqual(second["status"], "error")
+
+    def test_location_context_rate_limit_batch_does_not_retry_per_coordinate(self):
+        fetch_calls = []
+
+        def fake_fetch(coords, *_, **__):
+            fetch_calls.append(coords)
+            raise make_open_meteo_rate_limit_error()
+
+        with patch.object(weather_context, "_fetch_open_meteo_payloads", side_effect=fake_fetch):
+            first = weather_context.get_location_forecast_context(2.9264, 101.6964, 8)
+            second = weather_context.get_location_forecast_context(3.1563, 101.7117, 8)
+
+        self.assertEqual(len(fetch_calls), 1)
+        self.assertEqual(len(fetch_calls[0]), 9)
+        self.assertEqual(first["status"], "error")
+        self.assertIsNone(first["current"])
+        self.assertEqual(first["daily"], [])
+        self.assertEqual(first["hourly_timeline"], [])
+        self.assertEqual(first["next_hour_30m"], [])
+        self.assertEqual(len(first["map"]["samples"]), 9)
+        self.assertEqual(first["map"]["frames"], [])
+        self.assertEqual(second["status"], "error")
+        self.assertIsNone(second["current"])
+
+    def test_location_context_rate_limit_uses_stale_cache_without_retry_storm(self):
+        cached_payload = make_forecast_payload(
+            temperature=30.2,
+            apparent_temperature=33.7,
+            humidity=73,
+            wind=8,
+            weather_code=2,
+        )
+
+        with patch.object(
+            weather_context,
+            "_fetch_open_meteo_payloads",
+            return_value=[cached_payload for _ in range(9)],
+        ):
+            first = weather_context.get_location_forecast_context(2.9264, 101.6964, 8)
+
+        weather_context._forecast_cache = {
+            coord_key: (0.0, payload)
+            for coord_key, (_, payload) in weather_context._forecast_cache.items()
+        }
+
+        with patch.object(
+            weather_context,
+            "_fetch_open_meteo_payloads",
+            side_effect=make_open_meteo_rate_limit_error(),
+        ) as fetch_mock:
+            second = weather_context.get_location_forecast_context(2.9264, 101.6964, 8)
+            third = weather_context.get_location_forecast_context(2.9264, 101.6964, 8)
+
+        self.assertEqual(fetch_mock.call_count, 1)
+        self.assertEqual(first["status"], "ok")
+        self.assertEqual(second["status"], "ok")
+        self.assertEqual(third["status"], "ok")
+        self.assertEqual(second["current"]["temperature_2m"], 30.2)
+        self.assertEqual(len(second["daily"]), 3)
+        self.assertEqual(len(second["hourly_timeline"]), 13)
+        self.assertEqual(len(second["map"]["frames"]), 6)
 
     def test_location_context_recovers_center_forecast_when_batch_fetch_fails(self):
         center_payload = make_forecast_payload(

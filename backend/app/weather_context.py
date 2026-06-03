@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -20,6 +21,12 @@ OPEN_METEO_ERROR_CACHE_TTL_SECONDS = int(
 )
 OPEN_METEO_STALE_IF_ERROR_TTL_SECONDS = int(
     os.getenv("OPEN_METEO_STALE_IF_ERROR_TTL_SECONDS", "300")
+)
+OPEN_METEO_RATE_LIMIT_BACKOFF_SECONDS = int(
+    os.getenv("OPEN_METEO_RATE_LIMIT_BACKOFF_SECONDS", "300")
+)
+OPEN_METEO_PER_COORD_RETRY_LIMIT = int(
+    os.getenv("OPEN_METEO_PER_COORD_RETRY_LIMIT", "3")
 )
 OPEN_METEO_COORD_PRECISION = int(os.getenv("OPEN_METEO_COORD_PRECISION", "3"))
 OPEN_METEO_DEFAULT_BATCH_LIMIT = int(os.getenv("OPEN_METEO_DEFAULT_BATCH_LIMIT", "8"))
@@ -71,6 +78,7 @@ _MAP_SAMPLE_GRID: tuple[tuple[str, int, int], ...] = (
 
 _forecast_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 _forecast_cache_lock = Lock()
+_open_meteo_rate_limited_until = 0.0
 logger = logging.getLogger("sensor-ingest.weather")
 
 
@@ -101,6 +109,35 @@ def _build_open_meteo_url(
 def _fetch_json(url: str) -> Any:
     with urllib.request.urlopen(url, timeout=OPEN_METEO_TIMEOUT_SECONDS) as response:
         return json.loads(response.read().decode("utf-8", "ignore"))
+
+
+def _is_open_meteo_rate_limit_error(exc: Exception) -> bool:
+    return isinstance(exc, urllib.error.HTTPError) and exc.code == 429
+
+
+def _open_meteo_rate_limit_backoff_remaining(now_monotonic: float | None = None) -> float:
+    now = time.monotonic() if now_monotonic is None else now_monotonic
+    return max(0.0, _open_meteo_rate_limited_until - now)
+
+
+def _activate_open_meteo_rate_limit_backoff(url: str) -> None:
+    global _open_meteo_rate_limited_until
+
+    backoff_seconds = max(1, OPEN_METEO_RATE_LIMIT_BACKOFF_SECONDS)
+    now = time.monotonic()
+    _open_meteo_rate_limited_until = max(
+        _open_meteo_rate_limited_until,
+        now + backoff_seconds,
+    )
+    logger.warning(
+        "Open-Meteo rate limited backend request status=429 backoff_seconds=%s url=%s",
+        backoff_seconds,
+        url,
+    )
+
+
+def _payload_is_error(payload: dict[str, Any] | None) -> bool:
+    return bool(payload) and payload.get("_fetch_status") == "error"
 
 
 def _safe_float(value: Any) -> float | None:
@@ -374,6 +411,14 @@ def _fetch_single_coord_payload(
                 raise ValueError("Open-Meteo returned no payloads for a single coordinate request.")
             return _stamp_payload(payloads[0], generated_at)
         except Exception as exc:
+            url = _build_open_meteo_url(
+                [(latitude, longitude)],
+                include_minutely_15=include_minutely_attempt,
+            )
+            if _is_open_meteo_rate_limit_error(exc):
+                _activate_open_meteo_rate_limit_backoff(url)
+                return None
+
             logger.warning(
                 "Open-Meteo single-coordinate fetch failed for latitude=%s longitude=%s "
                 "include_minutely_15=%s error=%s: %s url=%s",
@@ -382,13 +427,37 @@ def _fetch_single_coord_payload(
                 include_minutely_attempt,
                 exc.__class__.__name__,
                 exc,
-                _build_open_meteo_url(
-                    [(latitude, longitude)],
-                    include_minutely_15=include_minutely_attempt,
-                ),
+                url,
             )
 
     return None
+
+
+def _cache_stale_or_error_payloads(
+    missing_coords: list[tuple[str, float, float]],
+    stale_payloads_by_coord: dict[str, dict[str, Any]],
+    payloads_by_coord: dict[str, dict[str, Any]],
+    generated_at: datetime,
+    *,
+    error_ttl_seconds: int = OPEN_METEO_ERROR_CACHE_TTL_SECONDS,
+) -> None:
+    with _forecast_cache_lock:
+        for coord_key, _, _ in missing_coords:
+            fallback_payload = stale_payloads_by_coord.get(coord_key)
+            if fallback_payload is not None and not _payload_is_error(fallback_payload):
+                payloads_by_coord[coord_key] = copy.deepcopy(fallback_payload)
+                _forecast_cache[coord_key] = (
+                    time.monotonic() + OPEN_METEO_STALE_IF_ERROR_TTL_SECONDS,
+                    copy.deepcopy(fallback_payload),
+                )
+                continue
+
+            error_payload = _error_payload(generated_at)
+            payloads_by_coord[coord_key] = copy.deepcopy(error_payload)
+            _forecast_cache[coord_key] = (
+                time.monotonic() + max(1, error_ttl_seconds),
+                copy.deepcopy(error_payload),
+            )
 
 
 def _get_cached_payloads_by_coord(
@@ -420,7 +489,25 @@ def _get_cached_payloads_by_coord(
         return payloads_by_coord
 
     generated_at = datetime.now(timezone.utc)
+    backoff_remaining = _open_meteo_rate_limit_backoff_remaining()
+    if backoff_remaining > 0:
+        logger.warning(
+            "Open-Meteo request skipped during rate-limit backoff remaining_seconds=%s",
+            round(backoff_remaining),
+        )
+        _cache_stale_or_error_payloads(
+            missing_coords,
+            stale_payloads_by_coord,
+            payloads_by_coord,
+            generated_at,
+            error_ttl_seconds=math.ceil(backoff_remaining),
+        )
+        return payloads_by_coord
+
     try:
+        batch_url = _build_open_meteo_url(
+            [(latitude, longitude) for _, latitude, longitude in missing_coords]
+        )
         fetched_payloads = _fetch_open_meteo_payloads(
             [(latitude, longitude) for _, latitude, longitude in missing_coords]
         )
@@ -462,34 +549,44 @@ def _get_cached_payloads_by_coord(
                     time.monotonic() + OPEN_METEO_CACHE_TTL_SECONDS,
                     copy.deepcopy(cached_payload),
                 )
-    except Exception:
+    except Exception as exc:
+        if _is_open_meteo_rate_limit_error(exc):
+            _activate_open_meteo_rate_limit_backoff(batch_url)
+            _cache_stale_or_error_payloads(
+                missing_coords,
+                stale_payloads_by_coord,
+                payloads_by_coord,
+                generated_at,
+                error_ttl_seconds=OPEN_METEO_RATE_LIMIT_BACKOFF_SECONDS,
+            )
+            return payloads_by_coord
+
         logger.warning(
             "Open-Meteo batch fetch failed for %s coordinate(s); retrying per coordinate. url=%s",
             len(missing_coords),
-            _build_open_meteo_url(
-                [(latitude, longitude) for _, latitude, longitude in missing_coords]
-            ),
+            batch_url,
             exc_info=True,
         )
-        with _forecast_cache_lock:
-            for coord_key, _, _ in missing_coords:
-                fallback_payload = stale_payloads_by_coord.get(coord_key)
-                if fallback_payload is not None:
-                    payloads_by_coord[coord_key] = copy.deepcopy(fallback_payload)
-                    _forecast_cache[coord_key] = (
-                        time.monotonic() + OPEN_METEO_STALE_IF_ERROR_TTL_SECONDS,
-                        copy.deepcopy(fallback_payload),
-                    )
-                else:
-                    error_payload = _error_payload(generated_at)
-                    payloads_by_coord[coord_key] = copy.deepcopy(error_payload)
-                    _forecast_cache[coord_key] = (
-                        time.monotonic() + OPEN_METEO_ERROR_CACHE_TTL_SECONDS,
-                        copy.deepcopy(error_payload),
-                    )
+        _cache_stale_or_error_payloads(
+            missing_coords,
+            stale_payloads_by_coord,
+            payloads_by_coord,
+            generated_at,
+        )
 
-        for coord_key, latitude, longitude in missing_coords:
-            if coord_key in stale_payloads_by_coord:
+        retry_candidates = [
+            item
+            for item in missing_coords
+            if item[0] not in stale_payloads_by_coord
+            or _payload_is_error(stale_payloads_by_coord.get(item[0]))
+        ][:max(0, OPEN_METEO_PER_COORD_RETRY_LIMIT)]
+        for coord_key, latitude, longitude in retry_candidates:
+            if _open_meteo_rate_limit_backoff_remaining() > 0:
+                break
+            if (
+                coord_key in stale_payloads_by_coord
+                and not _payload_is_error(stale_payloads_by_coord.get(coord_key))
+            ):
                 continue
 
             recovered_payload = _fetch_single_coord_payload(
@@ -770,7 +867,10 @@ def get_location_forecast_context(
     radius_km: float = OPEN_METEO_LOCATION_RADIUS_KM,
 ) -> dict[str, Any]:
     samples = _build_location_samples(latitude, longitude, radius_km)
-    coords = [(sample["latitude"], sample["longitude"]) for sample in samples]
+    coords = [
+        (sample["latitude"], sample["longitude"])
+        for sample in sorted(samples, key=lambda sample: sample["id"] != "center")
+    ]
     payloads_by_coord = _get_cached_payloads_by_coord(coords)
     center_key = _coord_key(latitude, longitude)
     center_payload = copy.deepcopy(payloads_by_coord.get(center_key))
@@ -849,5 +949,7 @@ def get_location_forecast_context(
 
 
 def _reset_forecast_cache() -> None:
+    global _open_meteo_rate_limited_until
     with _forecast_cache_lock:
         _forecast_cache.clear()
+    _open_meteo_rate_limited_until = 0.0
