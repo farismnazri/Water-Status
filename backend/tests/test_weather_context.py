@@ -184,6 +184,33 @@ class WeatherContextTests(unittest.TestCase):
         main._reset_weather_rate_limit_state()
         main._reset_location_reverse_geocode_cache()
 
+    def test_reverse_geocode_label_cleans_administrative_suffix(self):
+        label = main._pick_reverse_geocode_locality_label(
+            {
+                "address": {
+                    "hamlet": "Kampung Sungai Jernih",
+                    "city": "Kajang Municipal Council",
+                    "district": "Hulu Langat",
+                    "state": "Selangor",
+                }
+            }
+        )
+
+        self.assertEqual(label, "Kajang")
+
+    def test_reverse_geocode_label_prefers_locality_over_broad_district(self):
+        label = main._pick_reverse_geocode_locality_label(
+            {
+                "address": {
+                    "town": "Kajang",
+                    "district": "Sepang",
+                    "state": "Selangor",
+                }
+            }
+        )
+
+        self.assertEqual(label, "Kajang")
+
     def test_batches_nearby_coordinates_and_reuses_cache(self):
         sensors = [
             {
@@ -363,7 +390,10 @@ class WeatherContextTests(unittest.TestCase):
             weather_context,
             "_fetch_open_meteo_payloads",
             side_effect=RuntimeError("network down"),
-        ) as fetch_mock:
+        ) as fetch_mock, self.assertLogs(
+            "sensor-ingest.weather",
+            level="WARNING",
+        ) as logs:
             first = weather_context.get_location_forecast_context(3.1563, 101.7117, 8)
             first_call_count = fetch_mock.call_count
             second = weather_context.get_location_forecast_context(3.1563, 101.7117, 8)
@@ -372,6 +402,9 @@ class WeatherContextTests(unittest.TestCase):
         self.assertEqual(fetch_mock.call_count, first_call_count)
         self.assertEqual(first["status"], "error")
         self.assertEqual(second["status"], "error")
+        self.assertTrue(
+            any("Open-Meteo location context center payload is error" in line for line in logs.output)
+        )
 
     def test_location_context_rate_limit_batch_does_not_retry_per_coordinate(self):
         fetch_calls = []

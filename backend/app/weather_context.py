@@ -442,9 +442,12 @@ def _cache_stale_or_error_payloads(
     error_ttl_seconds: int = OPEN_METEO_ERROR_CACHE_TTL_SECONDS,
 ) -> None:
     with _forecast_cache_lock:
+        stale_count = 0
+        error_count = 0
         for coord_key, _, _ in missing_coords:
             fallback_payload = stale_payloads_by_coord.get(coord_key)
             if fallback_payload is not None and not _payload_is_error(fallback_payload):
+                stale_count += 1
                 payloads_by_coord[coord_key] = copy.deepcopy(fallback_payload)
                 _forecast_cache[coord_key] = (
                     time.monotonic() + OPEN_METEO_STALE_IF_ERROR_TTL_SECONDS,
@@ -452,12 +455,21 @@ def _cache_stale_or_error_payloads(
                 )
                 continue
 
+            error_count += 1
             error_payload = _error_payload(generated_at)
             payloads_by_coord[coord_key] = copy.deepcopy(error_payload)
             _forecast_cache[coord_key] = (
                 time.monotonic() + max(1, error_ttl_seconds),
                 copy.deepcopy(error_payload),
             )
+    if error_count:
+        logger.warning(
+            "Open-Meteo unavailable for %s coordinate(s); cached error payload(s). "
+            "stale_payloads_used=%s error_ttl_seconds=%s",
+            error_count,
+            stale_count,
+            max(1, error_ttl_seconds),
+        )
 
 
 def _get_cached_payloads_by_coord(
@@ -876,6 +888,12 @@ def get_location_forecast_context(
     center_payload = copy.deepcopy(payloads_by_coord.get(center_key))
 
     if not center_payload:
+        logger.warning(
+            "Open-Meteo location context missing center payload latitude=%s longitude=%s radius_km=%s",
+            f"{latitude:.5f}",
+            f"{longitude:.5f}",
+            radius_km,
+        )
         return {
             "status": "error",
             "source": OPEN_METEO_SOURCE,
@@ -900,6 +918,14 @@ def get_location_forecast_context(
         }
 
     if center_payload.get("_fetch_status") == "error":
+        logger.warning(
+            "Open-Meteo location context center payload is error latitude=%s longitude=%s "
+            "radius_km=%s generated_at=%s",
+            f"{latitude:.5f}",
+            f"{longitude:.5f}",
+            radius_km,
+            _payload_generated_at(center_payload),
+        )
         return {
             "status": "error",
             "source": OPEN_METEO_SOURCE,

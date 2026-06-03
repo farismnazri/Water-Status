@@ -438,11 +438,13 @@ function buildFallbackMapFrames(
 }
 
 function isUsableLocationForecastContext(context: WeatherLocationContext): boolean {
-  return !(
-    context.status === "error" ||
-    context.current == null ||
-    context.daily.length === 0 ||
-    context.hourly_timeline.length === 0
+  return (
+    context.status === "ok" &&
+    isRecord(context.current) &&
+    Array.isArray(context.daily) &&
+    context.daily.length > 0 &&
+    Array.isArray(context.hourly_timeline) &&
+    context.hourly_timeline.length > 0
   );
 }
 
@@ -684,63 +686,62 @@ export async function fetchLocationForecastContext({
   const backendUrl = `${API_BASE}/weather/location-context?${params.toString()}`;
   const requestPromise = (async () => {
     try {
-      const backendContext = await fetchBackendLocationForecastContext(backendUrl);
-      if (!ENABLE_CLIENT_OPEN_METEO_FALLBACK || isUsableLocationForecastContext(backendContext)) {
-        return backendContext;
-      }
-
-      try {
-        return await fetchClientLocationForecastContext({
+      const fetchClientFallback = () =>
+        fetchClientLocationForecastContext({
           latitude,
           longitude,
           radiusKm,
           label,
           mode,
         });
-      } catch {
-        return backendContext;
-      }
-    } catch (error) {
-      if (error instanceof HttpStatusError && error.status === 429) {
-        LOCATION_CONTEXT_RATE_LIMIT_COOLDOWNS.set(
-          requestKey,
-          Date.now() + LOCATION_CONTEXT_RATE_LIMIT_COOLDOWN_MS
-        );
+
+      let backendContext: WeatherLocationContext;
+      try {
+        backendContext = await fetchBackendLocationForecastContext(backendUrl);
+      } catch (error) {
+        if (error instanceof HttpStatusError && error.status === 429) {
+          LOCATION_CONTEXT_RATE_LIMIT_COOLDOWNS.set(
+            requestKey,
+            Date.now() + LOCATION_CONTEXT_RATE_LIMIT_COOLDOWN_MS
+          );
+          if (ENABLE_CLIENT_OPEN_METEO_FALLBACK) {
+            try {
+              return await fetchClientFallback();
+            } catch {
+              // Fall through to the existing rate-limit error path.
+            }
+          }
+
+          throw new ForecastRateLimitError(
+            error.retryAfterSeconds ??
+              Math.ceil(LOCATION_CONTEXT_RATE_LIMIT_COOLDOWN_MS / 1000)
+          );
+        }
+
         if (ENABLE_CLIENT_OPEN_METEO_FALLBACK) {
           try {
-            return await fetchClientLocationForecastContext({
-              latitude,
-              longitude,
-              radiusKm,
-              label,
-              mode,
-            });
+            return await fetchClientFallback();
           } catch {
-            // Fall through to the existing rate-limit error path.
+            // Preserve the original backend/network failure.
           }
         }
 
-        throw new ForecastRateLimitError(
-          error.retryAfterSeconds ??
-            Math.ceil(LOCATION_CONTEXT_RATE_LIMIT_COOLDOWN_MS / 1000)
-        );
+        throw error;
       }
 
-      if (ENABLE_CLIENT_OPEN_METEO_FALLBACK) {
-        try {
-          return await fetchClientLocationForecastContext({
-            latitude,
-            longitude,
-            radiusKm,
-            label,
-            mode,
-          });
-        } catch {
-          // Preserve the original backend/network failure.
-        }
+      if (isUsableLocationForecastContext(backendContext)) {
+        return backendContext;
       }
 
-      throw error;
+      if (!ENABLE_CLIENT_OPEN_METEO_FALLBACK) {
+        throw new BackendPayloadError("Unusable backend forecast payload");
+      }
+
+      try {
+        return await fetchClientFallback();
+      } catch {
+        throw new BackendPayloadError("Unusable backend forecast payload");
+      }
     } finally {
       LOCATION_CONTEXT_IN_FLIGHT_REQUESTS.delete(requestKey);
     }

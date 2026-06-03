@@ -1003,6 +1003,25 @@ def _cache_reverse_geocode_label(cache_key: str, label: str | None, ttl_seconds:
         _reverse_geocode_label_cache[cache_key] = (expires_at, label)
 
 
+def _clean_reverse_geocode_label(value: Any) -> str | None:
+    label = str(value or "").strip()
+    if not label:
+        return None
+
+    label = re.sub(r"\s+", " ", label)
+    suffix_patterns = (
+        r"\s+Municipal Council$",
+        r"\s+City Council$",
+        r"\s+District Council$",
+        r"\s+Municipality$",
+        r"\s+District$",
+    )
+    for pattern in suffix_patterns:
+        label = re.sub(pattern, "", label, flags=re.IGNORECASE).strip()
+
+    return label or None
+
+
 def _pick_reverse_geocode_locality_label(payload: dict[str, Any]) -> str | None:
     address = payload.get("address")
     if not isinstance(address, dict):
@@ -1028,7 +1047,7 @@ def _pick_reverse_geocode_locality_label(payload: dict[str, Any]) -> str | None:
     )
 
     for key in preferred_keys + fallback_keys:
-        value = str(address.get(key) or "").strip()
+        value = _clean_reverse_geocode_label(address.get(key))
         if value:
             return value
 
